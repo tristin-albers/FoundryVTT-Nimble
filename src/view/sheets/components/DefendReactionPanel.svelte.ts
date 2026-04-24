@@ -1,4 +1,5 @@
 import type { ReactionPanelStateOptions } from '../../../../types/components/ReactionPanel.d.ts';
+import { predictNextConsumedActionType } from '../../../combat/actionType.js';
 import {
 	getCombatantPipActiveStates,
 	getCombatantPipTypes,
@@ -43,20 +44,10 @@ export function createDefendPanelState(options: ReactionPanelStateOptions) {
 		);
 		if (!combatant || combatant.type !== 'character') return 'standard';
 
-		const pipTypes = getCombatantPipTypes(combatant);
-		const pipActiveStates = getCombatantPipActiveStates(combatant);
-
-		// Same priority as consumeCombatantAction: standard > bane > inspired (last index first)
-		for (let i = 2; i >= 0; i--) {
-			if (pipActiveStates[i] && pipTypes[i] === 'standard') return 'standard';
-		}
-		for (let i = 2; i >= 0; i--) {
-			if (pipActiveStates[i] && pipTypes[i] === 'bane') return 'bane';
-		}
-		for (let i = 2; i >= 0; i--) {
-			if (pipActiveStates[i] && pipTypes[i] === 'inspired') return 'inspired';
-		}
-		return 'standard';
+		return predictNextConsumedActionType(
+			getCombatantPipTypes(combatant),
+			getCombatantPipActiveStates(combatant),
+		);
 	}
 
 	async function handleDefend(): Promise<void> {

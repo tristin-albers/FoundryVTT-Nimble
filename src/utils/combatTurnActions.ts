@@ -1,4 +1,4 @@
-import type { ActionType } from '../combat/actionType.js';
+import { type ActionType, findPipIndexToConsume } from '../combat/actionType.js';
 import {
 	getCombatantPipActiveStates,
 	getCombatantPipTypes,
@@ -189,36 +189,6 @@ export interface ConsumeActionResult {
 }
 
 /**
- * Find the best pip to consume. Priority: standard first, then bane, then inspired.
- * If `preferredType` is provided, consume that type specifically.
- * Returns the pip index to consume, or -1 if none available.
- */
-function findPipToConsume(
-	pipTypes: ActionType[],
-	pipActiveStates: boolean[],
-	preferredType?: ActionType,
-): number {
-	if (preferredType) {
-		for (let i = 0; i < 3; i++) {
-			if (pipActiveStates[i] && pipTypes[i] === preferredType) return i;
-		}
-		return -1;
-	}
-
-	// Priority: standard > bane > inspired (search from last slot first to match old behavior)
-	for (let i = 2; i >= 0; i--) {
-		if (pipActiveStates[i] && pipTypes[i] === 'standard') return i;
-	}
-	for (let i = 2; i >= 0; i--) {
-		if (pipActiveStates[i] && pipTypes[i] === 'bane') return i;
-	}
-	for (let i = 2; i >= 0; i--) {
-		if (pipActiveStates[i] && pipTypes[i] === 'inspired') return i;
-	}
-	return -1;
-}
-
-/**
  * Check what typed actions are available (active bane/inspired pips with no standard pips).
  * Returns the types that are available, or empty if standard pips exist.
  */
@@ -267,7 +237,7 @@ export async function consumeCombatantAction(params: {
 
 		// Consume `normalizedCost` pips from base slots (0-2)
 		for (let c = 0; c < normalizedCost; c++) {
-			const pipIndex = findPipToConsume(pipTypes, pipActiveStates, params.preferredActionType);
+			const pipIndex = findPipIndexToConsume(pipTypes, pipActiveStates, params.preferredActionType);
 			if (pipIndex < 0) break;
 
 			consumed = pipTypes[pipIndex];

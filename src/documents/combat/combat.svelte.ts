@@ -13,6 +13,7 @@ import { initiativeRollLock } from '#utils/initiativeRollLock.js';
 import { isCombatantDead } from '#utils/isCombatantDead.js';
 import { getMinionGroupId, getMinionGroupSummaries } from '#utils/minionGrouping.js';
 import { queueCombatantMutationWithFreshDocument } from '#utils/queueCombatantMutationWithFreshDocument.js';
+import { findPipIndexToConsume } from '../../combat/actionType.js';
 import { isCombatReadinessEnabled } from '../../settings/combatReadinessSettings.js';
 import {
 	getCombatantBaseActionMax,
@@ -511,24 +512,36 @@ class NimbleCombat extends Combat {
 		const pipActiveStates = getCombatantPipActiveStates(combatant);
 		const update: Record<string, unknown> = { _id: combatantId };
 		let activeCount = 0;
+		let hasChanges = false;
 
 		for (let i = 0; i < 3; i++) {
 			const isActive = pipActiveStates[i] ?? false;
 			const pipType = pipTypes[i] ?? 'standard';
 
 			if (isActive && pipType !== 'standard') {
-				// Unspent bane/inspired: carry over as-is
 				activeCount++;
 			} else {
-				// Spent pip OR standard pip: reset to standard + active
-				update[`system.actions.base.pipType${i}`] = 'standard';
-				update[`system.actions.base.pipActive${i}`] = true;
+				if (pipType !== 'standard') {
+					update[`system.actions.base.pipType${i}`] = 'standard';
+					hasChanges = true;
+				}
+				if (!isActive) {
+					update[`system.actions.base.pipActive${i}`] = true;
+					hasChanges = true;
+				}
 				activeCount++;
 			}
 		}
 
-		update['system.actions.base.current'] = activeCount;
-		await this.updateEmbeddedDocuments('Combatant', [update]);
+		const currentActions = getCombatantCurrentActions(combatant);
+		if (currentActions !== activeCount) {
+			update['system.actions.base.current'] = activeCount;
+			hasChanges = true;
+		}
+
+		if (hasChanges) {
+			await this.updateEmbeddedDocuments('Combatant', [update]);
+		}
 	}
 
 	async #resetCharacterPipTypesForNewRound(): Promise<void> {
@@ -544,24 +557,36 @@ class NimbleCombat extends Combat {
 			const pipActiveStates = getCombatantPipActiveStates(combatant);
 			const update: Record<string, unknown> = { _id: combatantId };
 			let activeCount = 0;
+			let hasChanges = false;
 
 			for (let i = 0; i < 3; i++) {
 				const isActive = pipActiveStates[i] ?? false;
 				const pipType = pipTypes[i] ?? 'standard';
 
 				if (isActive && pipType !== 'standard') {
-					// Unspent bane/inspired: carry over as-is
 					activeCount++;
 				} else {
-					// Spent pip OR standard pip: reset to standard + active
-					update[`system.actions.base.pipType${i}`] = 'standard';
-					update[`system.actions.base.pipActive${i}`] = true;
+					if (pipType !== 'standard') {
+						update[`system.actions.base.pipType${i}`] = 'standard';
+						hasChanges = true;
+					}
+					if (!isActive) {
+						update[`system.actions.base.pipActive${i}`] = true;
+						hasChanges = true;
+					}
 					activeCount++;
 				}
 			}
 
-			update['system.actions.base.current'] = activeCount;
-			updates.push(update);
+			const currentActions = getCombatantCurrentActions(combatant);
+			if (currentActions !== activeCount) {
+				update['system.actions.base.current'] = activeCount;
+				hasChanges = true;
+			}
+
+			if (hasChanges) {
+				updates.push(update);
+			}
 		}
 
 		if (updates.length > 0) {
@@ -571,18 +596,21 @@ class NimbleCombat extends Combat {
 
 	async #removeHesitantConditionAfterRoundOne(): Promise<void> {
 		if (!isCombatReadinessEnabled()) return;
-		// Only clear hesitant after round 1 (i.e., when moving to round 2+)
 		if ((this.round ?? 1) <= 1) return;
 
+		const removals: Promise<unknown>[] = [];
 		for (const combatant of this.combatants.contents) {
 			if (combatant.type !== 'character') continue;
 			const actor = combatant.actor;
 			if (!actor) continue;
 
-			const hasHesitant = actor.statuses?.has('hesitant');
-			if (hasHesitant) {
-				await actor.toggleStatusEffect('hesitant', { active: false });
+			if (actor.statuses?.has('hesitant')) {
+				removals.push(actor.toggleStatusEffect('hesitant', { active: false }));
 			}
+		}
+
+		if (removals.length > 0) {
+			await Promise.all(removals);
 		}
 	}
 
@@ -862,41 +890,11 @@ class NimbleCombat extends Combat {
 						const actionsToConsume = usageState.requiredActions;
 
 						for (let c = 0; c < actionsToConsume; c++) {
-							// Find pip to consume: preferred type > standard > bane > inspired
-							let pipIndex = -1;
-							const preferred = options?.preferredActionType;
-							if (preferred) {
-								for (let i = 2; i >= 0; i--) {
-									if (pipActiveStates[i] && pipTypes[i] === preferred) {
-										pipIndex = i;
-										break;
-									}
-								}
-							}
-							if (pipIndex < 0) {
-								for (let i = 2; i >= 0; i--) {
-									if (pipActiveStates[i] && pipTypes[i] === 'standard') {
-										pipIndex = i;
-										break;
-									}
-								}
-							}
-							if (pipIndex < 0) {
-								for (let i = 2; i >= 0; i--) {
-									if (pipActiveStates[i] && pipTypes[i] === 'bane') {
-										pipIndex = i;
-										break;
-									}
-								}
-							}
-							if (pipIndex < 0) {
-								for (let i = 2; i >= 0; i--) {
-									if (pipActiveStates[i] && pipTypes[i] === 'inspired') {
-										pipIndex = i;
-										break;
-									}
-								}
-							}
+							const pipIndex = findPipIndexToConsume(
+								pipTypes,
+								pipActiveStates,
+								options?.preferredActionType,
+							);
 							if (pipIndex >= 0) {
 								pipActiveStates[pipIndex] = false;
 								reactionAvailabilityUpdate[`system.actions.base.pipActive${pipIndex}`] = false;

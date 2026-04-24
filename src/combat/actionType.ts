@@ -37,3 +37,41 @@ export function getDefaultPipTypes(): ActionType[] {
 export function isValidActionType(value: unknown): value is ActionType {
 	return value === 'standard' || value === 'bane' || value === 'inspired';
 }
+
+/**
+ * Find the best pip index to consume. Searches from highest index first.
+ * Priority: preferred type (if given) > standard > bane > inspired.
+ * Returns -1 if no active pip is available.
+ */
+export function findPipIndexToConsume(
+	pipTypes: ActionType[],
+	pipActiveStates: boolean[],
+	preferredType?: ActionType,
+): number {
+	if (preferredType) {
+		for (let i = 2; i >= 0; i--) {
+			if (pipActiveStates[i] && pipTypes[i] === preferredType) return i;
+		}
+	}
+	for (let i = 2; i >= 0; i--) {
+		if (pipActiveStates[i] && pipTypes[i] === 'standard') return i;
+	}
+	for (let i = 2; i >= 0; i--) {
+		if (pipActiveStates[i] && pipTypes[i] === 'bane') return i;
+	}
+	for (let i = 2; i >= 0; i--) {
+		if (pipActiveStates[i] && pipTypes[i] === 'inspired') return i;
+	}
+	return -1;
+}
+
+/**
+ * Predict which action type would be consumed next without modifying state.
+ */
+export function predictNextConsumedActionType(
+	pipTypes: ActionType[],
+	pipActiveStates: boolean[],
+): ActionType {
+	const index = findPipIndexToConsume(pipTypes, pipActiveStates);
+	return index >= 0 ? pipTypes[index] : 'standard';
+}
