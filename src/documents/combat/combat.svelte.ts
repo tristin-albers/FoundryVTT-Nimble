@@ -13,6 +13,7 @@ import { initiativeRollLock } from '#utils/initiativeRollLock.js';
 import { isCombatantDead } from '#utils/isCombatantDead.js';
 import { getMinionGroupId, getMinionGroupSummaries } from '#utils/minionGrouping.js';
 import { queueCombatantMutationWithFreshDocument } from '#utils/queueCombatantMutationWithFreshDocument.js';
+import { isCombatReadinessEnabled } from '../../settings/combatReadinessSettings.js';
 import { getCombatantBaseActionMax, getCombatantManualSortValue } from './combatantSystem.js';
 import { getCombatantCurrentActions, logMinionGroupingCombat } from './combatCommon.js';
 import { rollInitiativeForCombatant } from './combatInitiative.js';
@@ -490,6 +491,45 @@ class NimbleCombat extends Combat {
 		}, []);
 		if (updates.length < 1) return;
 		await this.updateEmbeddedDocuments('Combatant', updates);
+	}
+
+	async #resetCharacterPipTypesForNewRound(): Promise<void> {
+		if (!isCombatReadinessEnabled()) return;
+
+		const updates: Record<string, unknown>[] = [];
+		for (const combatant of this.combatants.contents) {
+			if (combatant.type !== 'character') continue;
+			const combatantId = combatant.id;
+			if (!combatantId) continue;
+
+			updates.push({
+				_id: combatantId,
+				'system.actions.base.pipType0': 'standard',
+				'system.actions.base.pipType1': 'standard',
+				'system.actions.base.pipType2': 'standard',
+			});
+		}
+
+		if (updates.length > 0) {
+			await this.updateEmbeddedDocuments('Combatant', updates);
+		}
+	}
+
+	async #removeHesitantConditionAfterRoundOne(): Promise<void> {
+		if (!isCombatReadinessEnabled()) return;
+		// Only clear hesitant after round 1 (i.e., when moving to round 2+)
+		if ((this.round ?? 1) <= 1) return;
+
+		for (const combatant of this.combatants.contents) {
+			if (combatant.type !== 'character') continue;
+			const actor = combatant.actor;
+			if (!actor) continue;
+
+			const hasHesitant = actor.statuses?.has('hesitant');
+			if (hasHesitant) {
+				await actor.toggleStatusEffect('hesitant', { active: false });
+			}
+		}
 	}
 
 	#normalizeCombatantCreateData(entry: Record<string, unknown>): {
@@ -1092,6 +1132,11 @@ class NimbleCombat extends Combat {
 		if (!intercepted) {
 			await this.#persistAtomicTurnState({ turn: this.turn });
 		}
+
+		// Combat Readiness: reset pip types to standard and clear hesitant condition
+		await this.#resetCharacterPipTypesForNewRound();
+		await this.#removeHesitantConditionAfterRoundOne();
+
 		return result;
 	}
 

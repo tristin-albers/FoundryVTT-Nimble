@@ -238,7 +238,8 @@
 			"taunted": "Taunted",
 			"unconscious": "Unconscious",
 			"wounded": "Wounded",
-			"lastStand": "Last Stand"
+			"lastStand": "Last Stand",
+			"hesitant": "Hesitant"
 		},
 		"conditionDescriptions": {
 			"blinded": "<p>Can't see. Attacks against you have advantage, and your attacks have disadvantage.</p>",
@@ -270,7 +271,8 @@
 			"stunned": "<p>Incapacitated. Can't do anything. Attacks against you have advantage, and melee attacks that hit, crit.</p>",
 			"taunted": "<p>Disadvantage on attacks except against the most recent taunter.</p>",
 			"unconscious": "<p>Incapacitated. Can't do anything. Attacks against you have advantage, and melee attacks that hit, crit.</p>",
-			"wounded": "<p>Has any Wounds (typically 6 Wounds and a hero is dead).</p>"
+			"wounded": "<p>Has any Wounds (typically 6 Wounds and a hero is dead).</p>",
+			"hesitant": "<p>Rolled 9 or below on initiative. Cannot act before Vigilant or Ready heroes on the first round of combat.</p>"
 		},
 		"currency": {
 			"cp": "Copper",
@@ -871,7 +873,17 @@
 					"spendAction": "Spend action {number}",
 					"restoreAction": "Restore action {number}",
 					"clickToSpend": "Click to spend action",
-					"clickToRestore": "Click to restore action"
+					"clickToRestore": "Click to restore action",
+					"ctrlClickBane": "Ctrl+Click: Set as Bane action",
+					"shiftClickInspired": "Shift+Click: Set as Inspired action",
+					"baneAction": "Bane Action",
+					"inspiredAction": "Inspired Action",
+					"standardAction": "Standard Action"
+				},
+				"readiness": {
+					"vigilant": "Vigilant",
+					"ready": "Ready",
+					"hesitant": "Hesitant"
 				},
 				"actionsHeader": "Actions",
 				"moveAction": "<p><strong>{name}</strong> used an action to move.</p>",
@@ -1493,6 +1505,10 @@
 			"ncswEnabled": {
 				"name": "Enable Combat System",
 				"hint": "Show the Combat System panel during combat. Helps GMs quickly target heroes and roll attacks for minions, monsters, and legendary monsters."
+			},
+			"combatReadiness": {
+				"name": "Combat Readiness (Variant Rule)",
+				"hint": "Enables the Combat Readiness variant initiative. Heroes roll initiative to determine readiness: Vigilant (20+) grants Inspired actions, Ready (10-19) grants Standard actions, and Hesitant (1-9) grants Bane actions."
 			},
 			"debugMode": {
 				"name": "Debug Mode",

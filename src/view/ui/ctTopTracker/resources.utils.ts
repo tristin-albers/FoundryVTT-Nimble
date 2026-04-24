@@ -1,4 +1,8 @@
-import { getCombatantBonusActions } from '../../../documents/combat/combatantSystem.js';
+import type { ActionType } from '../../../combat/actionType.js';
+import {
+	getCombatantBonusActions,
+	getCombatantPipTypes,
+} from '../../../documents/combat/combatantSystem.js';
 import type {
 	CombatTrackerNonPlayerHpBarTextMode,
 	CombatTrackerPlayerHpBarTextMode,
@@ -447,15 +451,26 @@ export function getActionState(combatant: Combatant.Implementation): {
 	max: number;
 	bonus: number;
 	effectiveMax: number;
+	pipTypes: ActionType[];
+	dominantPipType: ActionType;
 } {
 	const normalizedCurrent = getCombatantCurrentActions(combatant);
 	const normalizedMax = getCombatantMaxActions(combatant);
 	const bonus = getCombatantBonusActions(combatant);
+	const pipTypes = getCombatantPipTypes(combatant);
+
+	// Determine dominant pip type for CT box coloring
+	const hasBane = pipTypes.some((t) => t === 'bane');
+	const hasInspired = pipTypes.some((t) => t === 'inspired');
+	const dominantPipType: ActionType = hasInspired ? 'inspired' : hasBane ? 'bane' : 'standard';
+
 	return {
 		current: normalizedCurrent,
 		max: normalizedMax,
 		bonus,
 		effectiveMax: normalizedMax + bonus,
+		pipTypes,
+		dominantPipType,
 	};
 }
 

@@ -24,6 +24,24 @@ const nimbleCharacterCombatantSchema = () => ({
 				integer: true,
 				min: 0,
 			}),
+			pipType0: new fields.StringField({
+				required: true,
+				initial: 'standard',
+				nullable: false,
+				blank: false,
+			}),
+			pipType1: new fields.StringField({
+				required: true,
+				initial: 'standard',
+				nullable: false,
+				blank: false,
+			}),
+			pipType2: new fields.StringField({
+				required: true,
+				initial: 'standard',
+				nullable: false,
+				blank: false,
+			}),
 		}),
 		heroic: new fields.SchemaField({
 			interposeAvailable: new fields.BooleanField({

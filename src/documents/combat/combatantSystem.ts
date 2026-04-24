@@ -1,3 +1,4 @@
+import { type ActionType, isValidActionType } from '../../combat/actionType.js';
 import type { CombatantBaseActions, NimbleCombatantSystem } from './combatTypes.js';
 
 function getCombatantSystem(combatant: Combatant.Implementation): NimbleCombatantSystem | null {
@@ -39,4 +40,21 @@ export function getCombatantBaseActionMax(combatant: Combatant.Implementation): 
 
 export function getCombatantManualSortValue(combatant: Combatant.Implementation): number {
 	return Number(getCombatantSystem(combatant)?.sort ?? 0);
+}
+
+export function getCombatantPipTypes(combatant: Combatant.Implementation): ActionType[] {
+	const base = getCombatantSystem(combatant)?.actions?.base as
+		| { pipType0?: unknown; pipType1?: unknown; pipType2?: unknown }
+		| undefined;
+	if (!base) return ['standard', 'standard', 'standard'];
+
+	const raw0 = base.pipType0;
+	const raw1 = base.pipType1;
+	const raw2 = base.pipType2;
+
+	return [
+		isValidActionType(raw0) ? raw0 : 'standard',
+		isValidActionType(raw1) ? raw1 : 'standard',
+		isValidActionType(raw2) ? raw2 : 'standard',
+	];
 }

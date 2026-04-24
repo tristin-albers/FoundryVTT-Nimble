@@ -460,6 +460,9 @@
 												<span
 													class="nimble-ct__action-box"
 													class:nimble-ct__action-box--bonus={hasBonus}
+													class:nimble-ct__action-box--bane={actionState.dominantPipType === 'bane'}
+													class:nimble-ct__action-box--inspired={actionState.dominantPipType ===
+														'inspired'}
 													data-tooltip={`Available actions: ${displayCurrentActions} / ${displayMaxActions}`}
 													data-tooltip-direction="UP"
 												>
@@ -675,6 +678,9 @@
 												<span
 													class="nimble-ct__action-box"
 													class:nimble-ct__action-box--bonus={hasBonus}
+													class:nimble-ct__action-box--bane={actionState.dominantPipType === 'bane'}
+													class:nimble-ct__action-box--inspired={actionState.dominantPipType ===
+														'inspired'}
 													data-tooltip={`Available actions: ${displayCurrentActions} / ${displayMaxActions}`}
 													data-tooltip-direction="UP"
 												>
@@ -2118,6 +2124,16 @@
 	.nimble-ct__action-box--bonus {
 		border-color: hsl(45, 60%, 40%);
 		box-shadow: 0 0 0.36rem hsla(45, 80%, 55%, 0.3);
+	}
+	.nimble-ct__action-box--bane {
+		border-color: hsl(280, 40%, 45%);
+		box-shadow: 0 0 0.36rem hsla(280, 50%, 60%, 0.3);
+		color: hsl(280, 50%, 75%);
+	}
+	.nimble-ct__action-box--inspired {
+		border-color: hsl(0, 0%, 70%);
+		box-shadow: 0 0 0.48rem hsla(0, 0%, 100%, 0.35);
+		color: hsl(0, 0%, 95%);
 	}
 	.nimble-ct__action-max--bonus {
 		color: hsl(45, 80%, 55%);

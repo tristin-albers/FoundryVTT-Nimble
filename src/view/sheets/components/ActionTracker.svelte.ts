@@ -4,6 +4,7 @@ import type { NimbleCharacter } from '#documents/actor/character.js';
 import {
 	getCombatantBaseActions,
 	getCombatantBonusActions,
+	getCombatantPipTypes,
 } from '#documents/combat/combatantSystem.js';
 import type { PromptedInitiativeOptions } from '#types/combat.js';
 import { getActiveCombatForCurrentScene, registerCombatStateHooks } from '#utils/combatState.js';
@@ -12,6 +13,7 @@ import { getActiveCombatant } from '#utils/combatTurnSync.js';
 import { initiativeRollLock } from '#utils/initiativeRollLock.js';
 import localize from '#utils/localize.js';
 import { queueCombatantMutationWithFreshDocument } from '#utils/queueCombatantMutationWithFreshDocument.js';
+import type { ActionType } from '../../../combat/actionType.js';
 
 // ============================================================================
 // Types
@@ -22,6 +24,7 @@ interface ActionsData {
 	max: number;
 	bonus: number;
 	effectiveMax: number;
+	pipTypes: ActionType[];
 }
 
 // ============================================================================
@@ -86,16 +89,25 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 
 	function getActionsData(): ActionsData {
 		const combatant = getCombatantInCombat();
-		if (!combatant) return { current: 0, max: 3, bonus: 0, effectiveMax: 3 };
+		if (!combatant)
+			return {
+				current: 0,
+				max: 3,
+				bonus: 0,
+				effectiveMax: 3,
+				pipTypes: ['standard', 'standard', 'standard'],
+			};
 
 		const actions = getCombatantBaseActions(combatant);
 		const bonus = getCombatantBonusActions(combatant);
 		const max = actions.max || 3;
+		const pipTypes = getCombatantPipTypes(combatant);
 		return {
 			current: actions.current,
 			max,
 			bonus,
 			effectiveMax: max + bonus,
+			pipTypes,
 		};
 	}
 
@@ -217,8 +229,41 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 	// Pip Interaction
 	// ============================================================================
 
-	function handlePipClick(index: number): void {
+	async function updatePipType(index: number, newType: ActionType): Promise<void> {
+		const combat = getActiveCombatForCurrentScene();
+		const combatantId = getCombatantInCombat()?.id ?? null;
+		if (!combat || !combatantId) return;
+
+		const pipKey = `system.actions.base.pipType${index}` as const;
+		await queueCombatantMutationWithFreshDocument({
+			combat,
+			combatantId,
+			mutation: async (currentCombatant) => {
+				await currentCombatant.update({
+					[pipKey]: newType,
+				} as Record<string, unknown>);
+			},
+		});
+	}
+
+	function handlePipClick(index: number, event?: MouseEvent): void {
 		if (!hasInitiative) return;
+
+		// Ctrl+click: set pip type to bane
+		if (event?.ctrlKey || event?.metaKey) {
+			const currentType = actionsData.pipTypes[index];
+			const newType: ActionType = currentType === 'bane' ? 'standard' : 'bane';
+			void updatePipType(index, newType);
+			return;
+		}
+
+		// Shift+click: set pip type to inspired
+		if (event?.shiftKey) {
+			const currentType = actionsData.pipTypes[index];
+			const newType: ActionType = currentType === 'inspired' ? 'standard' : 'inspired';
+			void updatePipType(index, newType);
+			return;
+		}
 
 		const isAvailable = index < actionsData.current;
 
@@ -239,14 +284,30 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 		return localize('NIMBLE.ui.heroicActions.pip.restoreAction', { number });
 	}
 
-	function getPipTooltip(isAvailable: boolean): string {
+	function getPipTypeLabel(index: number): string {
+		const pipType = actionsData.pipTypes[index] ?? 'standard';
+		switch (pipType) {
+			case 'bane':
+				return localize('NIMBLE.ui.heroicActions.pip.baneAction');
+			case 'inspired':
+				return localize('NIMBLE.ui.heroicActions.pip.inspiredAction');
+			default:
+				return localize('NIMBLE.ui.heroicActions.pip.standardAction');
+		}
+	}
+
+	function getPipTooltip(isAvailable: boolean, index: number): string {
 		if (!hasInitiative) {
 			return localize('NIMBLE.ui.heroicActions.enterCombat');
 		}
+
+		const pipType = actionsData.pipTypes[index] ?? 'standard';
+		const typeLabel = pipType !== 'standard' ? `${getPipTypeLabel(index)} — ` : '';
+
 		if (isAvailable) {
-			return localize('NIMBLE.ui.heroicActions.pip.clickToSpend');
+			return `${typeLabel}${localize('NIMBLE.ui.heroicActions.pip.clickToSpend')}`;
 		}
-		return localize('NIMBLE.ui.heroicActions.pip.clickToRestore');
+		return `${typeLabel}${localize('NIMBLE.ui.heroicActions.pip.clickToRestore')}`;
 	}
 
 	// ============================================================================
@@ -310,6 +371,7 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 
 		// Helpers
 		getPipAriaLabel,
+		getPipTypeLabel,
 		getPipTooltip,
 		setupPipAnimationEffect,
 	};
