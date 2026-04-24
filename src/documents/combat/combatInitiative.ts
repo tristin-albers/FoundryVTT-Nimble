@@ -12,15 +12,20 @@ function applyStandardInitiativeActions(
 	rollTotal: number,
 ): void {
 	const actionPath = 'system.actions.base.current';
+	let actionCount: number;
 	if (rollTotal >= 20) {
-		combatantUpdates[actionPath] = 3;
-		return;
+		actionCount = 3;
+	} else if (rollTotal >= 10) {
+		actionCount = 2;
+	} else {
+		actionCount = 1;
 	}
-	if (rollTotal >= 10) {
-		combatantUpdates[actionPath] = 2;
-		return;
-	}
-	combatantUpdates[actionPath] = 1;
+	combatantUpdates[actionPath] = actionCount;
+
+	// Set per-pip active states to match the action count
+	combatantUpdates['system.actions.base.pipActive0'] = actionCount >= 1;
+	combatantUpdates['system.actions.base.pipActive1'] = actionCount >= 2;
+	combatantUpdates['system.actions.base.pipActive2'] = actionCount >= 3;
 }
 
 function applyCombatReadinessActions(
@@ -34,10 +39,13 @@ function applyCombatReadinessActions(
 	combatantUpdates['system.actions.base.current'] = 3;
 	combatantUpdates['system.actions.base.max'] = 3;
 
-	// Set per-pip types
+	// Set per-pip types and activate all
 	combatantUpdates['system.actions.base.pipType0'] = pipTypes[0];
 	combatantUpdates['system.actions.base.pipType1'] = pipTypes[1];
 	combatantUpdates['system.actions.base.pipType2'] = pipTypes[2];
+	combatantUpdates['system.actions.base.pipActive0'] = true;
+	combatantUpdates['system.actions.base.pipActive1'] = true;
+	combatantUpdates['system.actions.base.pipActive2'] = true;
 }
 
 export function applyCharacterInitiativeActionUpdate(

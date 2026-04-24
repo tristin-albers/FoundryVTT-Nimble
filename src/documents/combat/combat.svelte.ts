@@ -507,6 +507,10 @@ class NimbleCombat extends Combat {
 				'system.actions.base.pipType0': 'standard',
 				'system.actions.base.pipType1': 'standard',
 				'system.actions.base.pipType2': 'standard',
+				'system.actions.base.pipActive0': true,
+				'system.actions.base.pipActive1': true,
+				'system.actions.base.pipActive2': true,
+				'system.actions.base.current': 3,
 			});
 		}
 

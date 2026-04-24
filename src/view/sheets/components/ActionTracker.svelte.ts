@@ -4,6 +4,7 @@ import type { NimbleCharacter } from '#documents/actor/character.js';
 import {
 	getCombatantBaseActions,
 	getCombatantBonusActions,
+	getCombatantPipActiveStates,
 	getCombatantPipTypes,
 } from '#documents/combat/combatantSystem.js';
 import type { PromptedInitiativeOptions } from '#types/combat.js';
@@ -25,6 +26,7 @@ interface ActionsData {
 	bonus: number;
 	effectiveMax: number;
 	pipTypes: ActionType[];
+	pipActiveStates: boolean[];
 }
 
 // ============================================================================
@@ -96,18 +98,21 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 				bonus: 0,
 				effectiveMax: 3,
 				pipTypes: ['standard', 'standard', 'standard'],
+				pipActiveStates: [false, false, false],
 			};
 
 		const actions = getCombatantBaseActions(combatant);
 		const bonus = getCombatantBonusActions(combatant);
 		const max = actions.max || 3;
 		const pipTypes = getCombatantPipTypes(combatant);
+		const pipActiveStates = getCombatantPipActiveStates(combatant);
 		return {
 			current: actions.current,
 			max,
 			bonus,
 			effectiveMax: max + bonus,
 			pipTypes,
+			pipActiveStates,
 		};
 	}
 
@@ -139,22 +144,6 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 		} catch (_error) {
 			ui.notifications?.warn(localize('NIMBLE.ui.heroicActions.noPermissionRollInitiative'));
 		}
-	}
-
-	async function updateActionPips(newValue: number): Promise<void> {
-		const combat = getActiveCombatForCurrentScene();
-		const combatantId = getCombatantInCombat()?.id ?? null;
-		if (!combat || !combatantId) return;
-
-		await queueCombatantMutationWithFreshDocument({
-			combat,
-			combatantId,
-			mutation: async (currentCombatant) => {
-				await currentCombatant.update({
-					'system.actions.base.current': newValue,
-				} as Record<string, unknown>);
-			},
-		});
 	}
 
 	async function addBonusAction(): Promise<void> {
@@ -229,19 +218,16 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 	// Pip Interaction
 	// ============================================================================
 
-	async function updatePipType(index: number, newType: ActionType): Promise<void> {
+	async function updatePipState(updates: Record<string, unknown>): Promise<void> {
 		const combat = getActiveCombatForCurrentScene();
 		const combatantId = getCombatantInCombat()?.id ?? null;
 		if (!combat || !combatantId) return;
 
-		const pipKey = `system.actions.base.pipType${index}` as const;
 		await queueCombatantMutationWithFreshDocument({
 			combat,
 			combatantId,
 			mutation: async (currentCombatant) => {
-				await currentCombatant.update({
-					[pipKey]: newType,
-				} as Record<string, unknown>);
+				await currentCombatant.update(updates);
 			},
 		});
 	}
@@ -249,36 +235,42 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 	function handlePipClick(index: number, event?: MouseEvent): void {
 		if (!hasInitiative) return;
 
-		// Ctrl+click: set pip type to bane
+		// Ctrl+click: toggle pip type to bane
 		if (event?.ctrlKey || event?.metaKey) {
 			const currentType = actionsData.pipTypes[index];
 			const newType: ActionType = currentType === 'bane' ? 'standard' : 'bane';
-			void updatePipType(index, newType);
+			void updatePipState({
+				[`system.actions.base.pipType${index}`]: newType,
+			} as Record<string, unknown>);
 			return;
 		}
 
-		// Shift+click: set pip type to inspired
+		// Shift+click: toggle pip type to inspired
 		if (event?.shiftKey) {
 			const currentType = actionsData.pipTypes[index];
 			const newType: ActionType = currentType === 'inspired' ? 'standard' : 'inspired';
-			void updatePipType(index, newType);
+			void updatePipState({
+				[`system.actions.base.pipType${index}`]: newType,
+			} as Record<string, unknown>);
 			return;
 		}
 
-		const isAvailable = index < actionsData.current;
+		// Normal click: toggle this pip's active state and sync current count
+		const isActive = actionsData.pipActiveStates[index] ?? false;
+		const newActiveStates = [...actionsData.pipActiveStates];
+		newActiveStates[index] = !isActive;
+		const newCurrent = newActiveStates.filter(Boolean).length;
 
-		if (isAvailable) {
-			const newCurrent = Math.max(actionsData.current - 1, 0);
-			void updateActionPips(newCurrent);
-		} else {
-			const newCurrent = Math.min(actionsData.current + 1, actionsData.effectiveMax);
-			void updateActionPips(newCurrent);
-		}
+		void updatePipState({
+			[`system.actions.base.pipActive${index}`]: !isActive,
+			'system.actions.base.current': newCurrent,
+		} as Record<string, unknown>);
 	}
 
-	function getPipAriaLabel(index: number, isAvailable: boolean): string {
+	function getPipAriaLabel(index: number): string {
 		const number = String(index + 1);
-		if (isAvailable) {
+		const isActive = actionsData.pipActiveStates[index] ?? false;
+		if (isActive) {
 			return localize('NIMBLE.ui.heroicActions.pip.spendAction', { number });
 		}
 		return localize('NIMBLE.ui.heroicActions.pip.restoreAction', { number });
@@ -296,15 +288,16 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 		}
 	}
 
-	function getPipTooltip(isAvailable: boolean, index: number): string {
+	function getPipTooltip(index: number): string {
 		if (!hasInitiative) {
 			return localize('NIMBLE.ui.heroicActions.enterCombat');
 		}
 
 		const pipType = actionsData.pipTypes[index] ?? 'standard';
 		const typeLabel = pipType !== 'standard' ? `${getPipTypeLabel(index)} — ` : '';
+		const isActive = actionsData.pipActiveStates[index] ?? false;
 
-		if (isAvailable) {
+		if (isActive) {
 			return `${typeLabel}${localize('NIMBLE.ui.heroicActions.pip.clickToSpend')}`;
 		}
 		return `${typeLabel}${localize('NIMBLE.ui.heroicActions.pip.clickToRestore')}`;

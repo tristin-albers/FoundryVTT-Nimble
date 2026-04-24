@@ -2131,9 +2131,9 @@
 		color: hsl(280, 50%, 75%);
 	}
 	.nimble-ct__action-box--inspired {
-		border-color: hsl(0, 0%, 70%);
-		box-shadow: 0 0 0.48rem hsla(0, 0%, 100%, 0.35);
-		color: hsl(0, 0%, 95%);
+		border-color: hsl(210, 50%, 55%);
+		box-shadow: 0 0 0.36rem hsla(210, 60%, 75%, 0.3);
+		color: hsl(210, 60%, 75%);
 	}
 	.nimble-ct__action-max--bonus {
 		color: hsl(45, 80%, 55%);

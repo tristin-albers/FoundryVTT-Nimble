@@ -58,3 +58,12 @@ export function getCombatantPipTypes(combatant: Combatant.Implementation): Actio
 		isValidActionType(raw2) ? raw2 : 'standard',
 	];
 }
+
+export function getCombatantPipActiveStates(combatant: Combatant.Implementation): boolean[] {
+	const base = getCombatantSystem(combatant)?.actions?.base as
+		| { pipActive0?: unknown; pipActive1?: unknown; pipActive2?: unknown }
+		| undefined;
+	if (!base) return [false, false, false];
+
+	return [Boolean(base.pipActive0), Boolean(base.pipActive1), Boolean(base.pipActive2)];
+}

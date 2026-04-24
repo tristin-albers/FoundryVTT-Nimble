@@ -36,7 +36,7 @@
 			{:else if state.hasInitiative}
 				<div class="action-tracker__pips">
 					{#each { length: state.actionsData.effectiveMax }, i}
-						{@const isAvailable = i < state.actionsData.current}
+						{@const isActive = state.actionsData.pipActiveStates[i] ?? false}
 						{@const isBonus = i >= state.actionsData.max}
 						{@const isJustSpent = state.justSpentPips.has(i)}
 						{@const diceIcon = getDiceIcon(i)}
@@ -44,15 +44,15 @@
 
 						<button
 							class="action-tracker__pip"
-							class:action-tracker__pip--available={isAvailable}
-							class:action-tracker__pip--spent={!isAvailable}
+							class:action-tracker__pip--available={isActive}
+							class:action-tracker__pip--spent={!isActive}
 							class:action-tracker__pip--bonus={isBonus}
 							class:action-tracker__pip--bane={pipType === 'bane'}
 							class:action-tracker__pip--inspired={pipType === 'inspired'}
 							class:action-tracker__pip--just-spent={isJustSpent}
 							type="button"
-							aria-label={state.getPipAriaLabel(i, isAvailable)}
-							data-tooltip={state.getPipTooltip(isAvailable, i)}
+							aria-label={state.getPipAriaLabel(i)}
+							data-tooltip={state.getPipTooltip(i)}
 							data-tooltip-direction="RIGHT"
 							onclick={(event) => state.handlePipClick(i, event)}
 						>
@@ -234,14 +234,14 @@
 			&--inspired.action-tracker__pip--available {
 				i,
 				.action-tracker__pip-number {
-					color: hsl(0, 0%, 95%);
-					filter: drop-shadow(0 0 3px hsl(0, 0%, 100%));
+					color: hsl(210, 60%, 75%);
+					filter: drop-shadow(0 0 2px hsla(210, 60%, 75%, 0.4));
 				}
 
 				&:hover i,
 				&:hover .action-tracker__pip-number {
-					color: hsl(0, 0%, 100%);
-					filter: drop-shadow(0 0 6px hsl(0, 0%, 100%)) drop-shadow(0 0 10px hsl(210, 50%, 80%));
+					color: hsl(210, 65%, 82%);
+					filter: drop-shadow(0 0 4px hsla(210, 60%, 75%, 0.5));
 				}
 			}
 

@@ -42,6 +42,21 @@ const nimbleCharacterCombatantSchema = () => ({
 				nullable: false,
 				blank: false,
 			}),
+			pipActive0: new fields.BooleanField({
+				required: true,
+				initial: false,
+				nullable: false,
+			}),
+			pipActive1: new fields.BooleanField({
+				required: true,
+				initial: false,
+				nullable: false,
+			}),
+			pipActive2: new fields.BooleanField({
+				required: true,
+				initial: false,
+				nullable: false,
+			}),
 		}),
 		heroic: new fields.SchemaField({
 			interposeAvailable: new fields.BooleanField({
