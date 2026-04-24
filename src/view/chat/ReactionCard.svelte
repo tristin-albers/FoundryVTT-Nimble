@@ -16,6 +16,8 @@
 	const headerTextColor = $derived(state.headerTextColor);
 	const reactionType = $derived(state.reactionType);
 	const armorValue = $derived(state.armorValue);
+	const armorModifier = $derived(state.armorModifier);
+	const actionTypeTag = $derived(state.actionTypeTag);
 	const weaponName = $derived(state.weaponName);
 	const weaponDamage = $derived(state.weaponDamage);
 	const chatMessage = $derived(state.chatMessage);
@@ -40,7 +42,7 @@
 			<i class={reactionConfig.icon}></i>
 		</div>
 		<div class="reaction-card__title-group">
-			<h3 class="reaction-card__title">{reactionConfig.title}</h3>
+			<h3 class="reaction-card__title">{reactionConfig.title}{actionTypeTag}</h3>
 			<span class="reaction-card__cost">
 				<i class="fa-solid fa-bolt"></i>
 				{localize('NIMBLE.ui.heroicActions.reactions.cost')}
@@ -50,6 +52,15 @@
 			<div class="reaction-card__badge reaction-card__badge--defend">
 				<i class="fa-solid fa-shield"></i>
 				{localize('NIMBLE.ui.heroicActions.reactions.defend.armorBadge', { armor: armorValue })}
+				{#if armorModifier !== 0}
+					<span
+						class="reaction-card__armor-modifier"
+						class:reaction-card__armor-modifier--bane={armorModifier < 0}
+						class:reaction-card__armor-modifier--inspired={armorModifier > 0}
+					>
+						({armorModifier > 0 ? '+' : ''}{armorModifier})
+					</span>
+				{/if}
 			</div>
 		{:else if reactionType === 'opportunity'}
 			<div class="reaction-card__badge reaction-card__badge--warning">
@@ -189,6 +200,19 @@
 			&--interpose {
 				color: var(--nimble-reaction-interpose-text);
 				background: var(--nimble-reaction-interpose-light);
+			}
+		}
+
+		&__armor-modifier {
+			font-size: var(--nimble-xs-text);
+			font-weight: 600;
+
+			&--bane {
+				color: hsl(280, 50%, 65%);
+			}
+
+			&--inspired {
+				color: hsl(210, 60%, 70%);
 			}
 		}
 

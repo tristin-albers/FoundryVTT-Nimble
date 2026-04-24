@@ -824,7 +824,10 @@ class NimbleCombat extends Combat {
 	async useHeroicReactions(
 		combatantId: string,
 		reactionKeys: HeroicReactionKey[],
-		options?: { force?: boolean },
+		options?: {
+			force?: boolean;
+			preferredActionType?: import('../../combat/actionType.js').ActionType;
+		},
 	): Promise<boolean> {
 		if (!combatantId || reactionKeys.length < 1) return false;
 
@@ -850,11 +853,70 @@ class NimbleCombat extends Combat {
 
 					const reactionAvailabilityUpdate = {
 						_id: combatantId,
-						'system.actions.base.current': Math.max(
+					} as Record<string, unknown>;
+
+					// Pip-aware action deduction for combat readiness
+					if (isCombatReadinessEnabled()) {
+						const pipTypes = getCombatantPipTypes(combatant);
+						const pipActiveStates = getCombatantPipActiveStates(combatant);
+						const actionsToConsume = usageState.requiredActions;
+
+						for (let c = 0; c < actionsToConsume; c++) {
+							// Find pip to consume: preferred type > standard > bane > inspired
+							let pipIndex = -1;
+							const preferred = options?.preferredActionType;
+							if (preferred) {
+								for (let i = 2; i >= 0; i--) {
+									if (pipActiveStates[i] && pipTypes[i] === preferred) {
+										pipIndex = i;
+										break;
+									}
+								}
+							}
+							if (pipIndex < 0) {
+								for (let i = 2; i >= 0; i--) {
+									if (pipActiveStates[i] && pipTypes[i] === 'standard') {
+										pipIndex = i;
+										break;
+									}
+								}
+							}
+							if (pipIndex < 0) {
+								for (let i = 2; i >= 0; i--) {
+									if (pipActiveStates[i] && pipTypes[i] === 'bane') {
+										pipIndex = i;
+										break;
+									}
+								}
+							}
+							if (pipIndex < 0) {
+								for (let i = 2; i >= 0; i--) {
+									if (pipActiveStates[i] && pipTypes[i] === 'inspired') {
+										pipIndex = i;
+										break;
+									}
+								}
+							}
+							if (pipIndex >= 0) {
+								pipActiveStates[pipIndex] = false;
+								reactionAvailabilityUpdate[`system.actions.base.pipActive${pipIndex}`] = false;
+							}
+						}
+
+						const basePipActiveCount = pipActiveStates.filter(Boolean).length;
+						const bonusActions = Math.max(
+							0,
+							usageState.currentActions -
+								getCombatantPipActiveStates(combatant).filter(Boolean).length,
+						);
+						reactionAvailabilityUpdate['system.actions.base.current'] =
+							basePipActiveCount + bonusActions;
+					} else {
+						reactionAvailabilityUpdate['system.actions.base.current'] = Math.max(
 							0,
 							usageState.currentActions - usageState.requiredActions,
-						),
-					} as Record<string, unknown>;
+						);
+					}
 
 					for (const reactionKey of usageState.reactionKeys) {
 						Object.assign(

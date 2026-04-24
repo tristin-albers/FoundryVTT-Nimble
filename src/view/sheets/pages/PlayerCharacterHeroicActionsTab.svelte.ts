@@ -2,15 +2,16 @@ import { createSubscriber } from 'svelte/reactivity';
 import type { NimbleCharacter } from '#documents/actor/character.js';
 import GenericDialog from '#documents/dialogs/GenericDialog.svelte.js';
 import { getActiveCombatForCurrentScene, registerCombatStateHooks } from '#utils/combatState.js';
+import { consumeCombatantAction } from '#utils/combatTurnActions.js';
 import { getHeroicReactionUsageState } from '#utils/getHeroicReactionUsageState.js';
 import {
 	getHeroicReactionAvailabilityTitle,
 	type HeroicReactionKey,
 } from '#utils/heroicActions.js';
 import localize from '#utils/localize.js';
-import { queueCombatantMutationWithFreshDocument } from '#utils/queueCombatantMutationWithFreshDocument.js';
 import filterItems from '#view/dataPreparationHelpers/filterItems.js';
 import HeroicActionsHelpDialog from '#view/dialogs/HeroicActionsHelpDialog.svelte';
+import type { ActionType } from '../../../combat/actionType.js';
 
 // ============================================================================
 // Types
@@ -167,28 +168,21 @@ export function createHeroicActionsTabState(getActor: () => NimbleCharacter) {
 		};
 	}
 
-	async function updateActionPips(newValue: number): Promise<void> {
+	async function deductActionPips(
+		count = 1,
+		preferredActionType?: ActionType,
+	): Promise<ActionType> {
 		const combat = getCombat();
 		const combatantId = getCombatantInCombat()?.id ?? null;
-		if (!combat || !combatantId) return;
+		if (!combat || !combatantId) return 'standard';
 
-		await queueCombatantMutationWithFreshDocument({
+		const result = await consumeCombatantAction({
 			combat,
 			combatantId,
-			mutation: async (currentCombatant) => {
-				await currentCombatant.update({
-					'system.actions.base.current': newValue,
-				} as Record<string, unknown>);
-			},
+			actionCost: count,
+			preferredActionType,
 		});
-	}
-
-	async function deductActionPips(count = 1): Promise<void> {
-		const { current } = getActionsData();
-		if (current > 0) {
-			const newValue = Math.max(0, current - count);
-			await updateActionPips(newValue);
-		}
+		return result.consumedActionType;
 	}
 
 	// Reactive combat state

@@ -1,4 +1,9 @@
 import type { ReactionPanelStateOptions } from '../../../../types/components/ReactionPanel.d.ts';
+import {
+	getCombatantPipActiveStates,
+	getCombatantPipTypes,
+} from '../../../documents/combat/combatantSystem.js';
+import { isCombatReadinessEnabled } from '../../../settings/combatReadinessSettings.js';
 import localize from '../../../utils/localize.js';
 import showReactionConfirmation from '../../../utils/showReactionConfirmation.js';
 import { getTargetedTokens, getTargetName } from '../../../utils/targeting.js';
@@ -27,8 +32,38 @@ export function createDefendPanelState(options: ReactionPanelStateOptions) {
 		return () => Hooks.off('targetToken', hookId);
 	});
 
+	function getNextConsumedActionType(): 'standard' | 'bane' | 'inspired' {
+		if (!isCombatReadinessEnabled()) return 'standard';
+
+		const combat = game.combat;
+		if (!combat?.started) return 'standard';
+
+		const combatant = combat.combatants?.find(
+			(entry: Combatant.Implementation) => entry.actorId === getActor().id,
+		);
+		if (!combatant || combatant.type !== 'character') return 'standard';
+
+		const pipTypes = getCombatantPipTypes(combatant);
+		const pipActiveStates = getCombatantPipActiveStates(combatant);
+
+		// Same priority as consumeCombatantAction: standard > bane > inspired (last index first)
+		for (let i = 2; i >= 0; i--) {
+			if (pipActiveStates[i] && pipTypes[i] === 'standard') return 'standard';
+		}
+		for (let i = 2; i >= 0; i--) {
+			if (pipActiveStates[i] && pipTypes[i] === 'bane') return 'bane';
+		}
+		for (let i = 2; i >= 0; i--) {
+			if (pipActiveStates[i] && pipTypes[i] === 'inspired') return 'inspired';
+		}
+		return 'standard';
+	}
+
 	async function handleDefend(): Promise<void> {
 		const isDisabled = getReactionDisabled();
+
+		// Determine which action type will be consumed before using the reaction
+		const consumedType = getNextConsumedActionType();
 
 		if (isDisabled) {
 			const defendSpent = getDefendSpent();
@@ -51,7 +86,23 @@ export function createDefendPanelState(options: ReactionPanelStateOptions) {
 		}
 
 		const actor = getActor();
-		const currentArmorValue = actor.reactive.system.attributes.armor.value ?? 0;
+		const baseArmorValue = actor.reactive.system.attributes.armor.value ?? 0;
+		const rollData =
+			(actor as unknown as { getRollData?: () => Record<string, unknown> }).getRollData?.() ?? {};
+		const keyAbilityMod = Number(rollData.key ?? 0);
+
+		let armorModifier = 0;
+		let actionTypeTag = '';
+		if (consumedType === 'bane') {
+			armorModifier = -keyAbilityMod;
+			actionTypeTag = ' (B)';
+		} else if (consumedType === 'inspired') {
+			armorModifier = keyAbilityMod;
+			actionTypeTag = ' (I)';
+		}
+
+		const effectiveArmor = Math.max(0, baseArmorValue + armorModifier);
+
 		const chatData = {
 			author: game.user?.id,
 			speaker: ChatMessage.getSpeaker({ actor }),
@@ -63,7 +114,9 @@ export function createDefendPanelState(options: ReactionPanelStateOptions) {
 				permissions: actor.permission,
 				rollMode: 0,
 				reactionType: 'defend',
-				armorValue: currentArmorValue,
+				armorValue: effectiveArmor,
+				armorModifier,
+				actionTypeTag,
 				targets: [],
 			},
 		};

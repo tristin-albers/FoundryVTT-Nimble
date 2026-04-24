@@ -13,6 +13,8 @@ export interface ReactionConfig {
 export interface ReactionSystemData {
 	reactionType: string;
 	armorValue: number | null;
+	armorModifier?: number;
+	actionTypeTag?: string;
 	weaponName: string | null;
 	weaponDamage: string | null;
 	actorName: string;
@@ -27,6 +29,8 @@ export function createReactionCardState(
 
 	const reactionType = $derived(system.reactionType);
 	const armorValue = $derived(system.armorValue);
+	const armorModifier = $derived(system.armorModifier ?? 0);
+	const actionTypeTag = $derived(system.actionTypeTag ?? '');
 	const weaponName = $derived(system.weaponName);
 	const weaponDamage = $derived(system.weaponDamage);
 	const actorName = $derived(system.actorName);
@@ -115,6 +119,12 @@ export function createReactionCardState(
 		},
 		get armorValue() {
 			return armorValue;
+		},
+		get armorModifier() {
+			return armorModifier;
+		},
+		get actionTypeTag() {
+			return actionTypeTag;
 		},
 		get weaponName() {
 			return weaponName;

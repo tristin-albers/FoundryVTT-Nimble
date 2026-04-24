@@ -7,7 +7,7 @@
 		actor,
 		inCombat = false,
 		actionsRemaining = 0,
-		onDeductAction = async () => {},
+		onDeductAction = async () => 'standard',
 	}: MoveActionPanelProps = $props();
 
 	let movementSpeeds = $derived(getMovementSpeeds(actor));
@@ -41,7 +41,20 @@
 			if (confirmed !== true) return;
 		}
 
-		await onDeductAction();
+		const consumedType = await onDeductAction();
+
+		const baseSpeed = primarySpeed?.value ?? 0;
+		let speedModifier = 0;
+		let actionTag = '';
+		if (consumedType === 'bane') {
+			speedModifier = -2;
+			actionTag = ' (B)';
+		} else if (consumedType === 'inspired') {
+			speedModifier = 2;
+			actionTag = ' (I)';
+		}
+
+		const effectiveSpeed = Math.max(0, baseSpeed + speedModifier);
 
 		const chatData = {
 			author: game.user?.id,
@@ -49,7 +62,9 @@
 			type: 'moveAction',
 			system: {
 				actorName: actor.name,
-				speed: primarySpeed?.value ?? 0,
+				speed: effectiveSpeed,
+				actionTypeTag: actionTag,
+				speedModifier,
 			},
 		};
 

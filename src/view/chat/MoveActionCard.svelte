@@ -13,6 +13,8 @@
 
 	const actorName = $derived(system.actorName);
 	const speed = $derived(system.speed);
+	const actionTypeTag = $derived(system.actionTypeTag ?? '');
+	const speedModifier = $derived(system.speedModifier ?? 0);
 </script>
 
 <CardHeader {messageDocument} />
@@ -27,7 +29,9 @@
 			<i class="fa-solid fa-person-running"></i>
 		</div>
 		<div class="move-action-card__title-group">
-			<h3 class="move-action-card__title">{localize('NIMBLE.ui.heroicActions.move.title')}</h3>
+			<h3 class="move-action-card__title">
+				{localize('NIMBLE.ui.heroicActions.move.title')}{actionTypeTag}
+			</h3>
 			<span class="move-action-card__cost">
 				<i class="fa-solid fa-bolt"></i>
 				{localize('NIMBLE.ui.heroicActions.move.cost')}
@@ -36,11 +40,29 @@
 		<div class="move-action-card__badge">
 			<i class="fa-solid fa-shoe-prints"></i>
 			{localize('NIMBLE.ui.heroicActions.move.speedBadge', { speed })}
+			{#if speedModifier !== 0}
+				<span
+					class="move-action-card__modifier"
+					class:move-action-card__modifier--bane={speedModifier < 0}
+					class:move-action-card__modifier--inspired={speedModifier > 0}
+				>
+					({speedModifier > 0 ? '+' : ''}{speedModifier})
+				</span>
+			{/if}
 		</div>
 	</header>
 
 	<div class="move-action-card__message">
 		{@html localize('NIMBLE.ui.heroicActions.move.chatMessage', { name: actorName, speed })}
+		{#if speedModifier !== 0}
+			<p class="move-action-card__action-note">
+				{#if speedModifier < 0}
+					<em>{localize('NIMBLE.ui.heroicActions.actionTypeModifier.baneMove')}</em>
+				{:else}
+					<em>{localize('NIMBLE.ui.heroicActions.actionTypeModifier.inspiredMove')}</em>
+				{/if}
+			</p>
+		{/if}
 	</div>
 </article>
 
@@ -118,6 +140,19 @@
 			}
 		}
 
+		&__modifier {
+			font-size: var(--nimble-xs-text);
+			font-weight: 600;
+
+			&--bane {
+				color: hsl(280, 50%, 65%);
+			}
+
+			&--inspired {
+				color: hsl(210, 60%, 75%);
+			}
+		}
+
 		&__message {
 			padding: var(--nimble-card-section-padding, 0.5rem);
 			font-size: var(--nimble-sm-text);
@@ -127,6 +162,11 @@
 			:global(p) {
 				margin: 0;
 			}
+		}
+
+		&__action-note {
+			margin-top: 0.25rem;
+			font-size: var(--nimble-xs-text);
 		}
 	}
 </style>
