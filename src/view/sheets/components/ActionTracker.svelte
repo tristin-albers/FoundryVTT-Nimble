@@ -36,8 +36,10 @@
 			{:else if state.hasInitiative}
 				<div class="action-tracker__pips">
 					{#each { length: state.actionsData.effectiveMax }, i}
-						{@const isActive = state.actionsData.pipActiveStates[i] ?? false}
 						{@const isBonus = i >= state.actionsData.max}
+						{@const isActive = isBonus
+							? i < state.actionsData.current
+							: (state.actionsData.pipActiveStates[i] ?? false)}
 						{@const isJustSpent = state.justSpentPips.has(i)}
 						{@const diceIcon = getDiceIcon(i)}
 						{@const pipType = state.actionsData.pipTypes[i] ?? 'standard'}

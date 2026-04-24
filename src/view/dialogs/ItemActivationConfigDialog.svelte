@@ -1,6 +1,5 @@
 <script>
 	import { untrack } from 'svelte';
-	import { getActiveCombatForCurrentScene } from '../../utils/combatState.js';
 	import { isCombatReadinessEnabled } from '../../settings/combatReadinessSettings.js';
 	import {
 		getCombatantPipActiveStates,
@@ -25,7 +24,7 @@
 		if (!isCombatReadinessEnabled())
 			return { hasBane: false, hasInspired: false, hasStandard: true };
 
-		const combat = getActiveCombatForCurrentScene();
+		const combat = game.combat;
 		if (!combat?.started) return { hasBane: false, hasInspired: false, hasStandard: true };
 
 		const combatant = combat.combatants.find((entry) => entry.actorId === actor.id);

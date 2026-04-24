@@ -263,8 +263,9 @@ export async function consumeCombatantAction(params: {
 		const pipActiveStates = getCombatantPipActiveStates(combatant);
 		const actionUpdate: Record<string, unknown> = { _id: params.combatantId };
 		let consumed: ActionType = 'standard';
+		let pipsConsumed = 0;
 
-		// Consume `normalizedCost` pips
+		// Consume `normalizedCost` pips from base slots (0-2)
 		for (let c = 0; c < normalizedCost; c++) {
 			const pipIndex = findPipToConsume(pipTypes, pipActiveStates, params.preferredActionType);
 			if (pipIndex < 0) break;
@@ -272,9 +273,24 @@ export async function consumeCombatantAction(params: {
 			consumed = pipTypes[pipIndex];
 			pipActiveStates[pipIndex] = false;
 			actionUpdate[`system.actions.base.pipActive${pipIndex}`] = false;
+			pipsConsumed++;
 		}
 
-		const nextActions = pipActiveStates.filter(Boolean).length;
+		// If we couldn't consume any pips from base slots, fall back to standard decrement
+		if (pipsConsumed === 0) {
+			const nextActions = Math.max(0, currentActions - normalizedCost);
+			actionUpdate[COMBATANT_ACTIONS_CURRENT_PATH] = nextActions;
+			await params.combat.updateEmbeddedDocuments('Combatant', [actionUpdate]);
+			return { remainingActions: nextActions, consumedActionType: 'standard' };
+		}
+
+		// Calculate new current: base pip active count + any bonus pips that were active
+		const basePipActiveCount = pipActiveStates.filter(Boolean).length;
+		const bonusActions = Math.max(
+			0,
+			currentActions - getCombatantPipActiveStates(combatant).filter(Boolean).length,
+		);
+		const nextActions = basePipActiveCount + bonusActions;
 		actionUpdate[COMBATANT_ACTIONS_CURRENT_PATH] = nextActions;
 		await params.combat.updateEmbeddedDocuments('Combatant', [actionUpdate]);
 		return { remainingActions: nextActions, consumedActionType: consumed };
