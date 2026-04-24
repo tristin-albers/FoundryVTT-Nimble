@@ -356,23 +356,29 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 	// ============================================================================
 
 	let justSpentPips = $state(new Set<number>());
-	let previousCurrent = $state(untrack(() => actionsData.current));
+	let previousPipActiveStates = $state(untrack(() => [...actionsData.pipActiveStates]));
 
 	function setupPipAnimationEffect(): void {
 		$effect(() => {
-			const current = actionsData.current;
-			if (current < previousCurrent) {
-				const newlySpent = new Set<number>();
-				for (let i = current; i < previousCurrent; i++) {
+			const currentStates = actionsData.pipActiveStates;
+			const newlySpent = new Set<number>();
+
+			for (let i = 0; i < currentStates.length; i++) {
+				const wasActive = previousPipActiveStates[i] ?? false;
+				const isActive = currentStates[i] ?? false;
+				if (wasActive && !isActive) {
 					newlySpent.add(i);
 				}
-				justSpentPips = newlySpent;
+			}
 
+			if (newlySpent.size > 0) {
+				justSpentPips = newlySpent;
 				setTimeout(() => {
 					justSpentPips = new Set();
 				}, 600);
 			}
-			previousCurrent = current;
+
+			previousPipActiveStates = [...currentStates];
 		});
 	}
 
