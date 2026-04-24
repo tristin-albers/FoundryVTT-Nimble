@@ -2,8 +2,8 @@ import { untrack } from 'svelte';
 import { createSubscriber } from 'svelte/reactivity';
 import type { NimbleCharacter } from '#documents/actor/character.js';
 import {
+	getCombatantAdditionalActions,
 	getCombatantBaseActions,
-	getCombatantBonusActions,
 	getCombatantBonusCurrent,
 	getCombatantPipActiveStates,
 	getCombatantPipTypes,
@@ -24,7 +24,7 @@ import type { ActionType } from '../../../combat/actionType.js';
 interface ActionsData {
 	current: number;
 	max: number;
-	bonus: number;
+	additional: number;
 	bonusCurrent: number;
 	effectiveMax: number;
 	pipTypes: ActionType[];
@@ -97,7 +97,7 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 			return {
 				current: 0,
 				max: 3,
-				bonus: 0,
+				additional: 0,
 				bonusCurrent: 0,
 				effectiveMax: 3,
 				pipTypes: ['standard', 'standard', 'standard'],
@@ -105,7 +105,7 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 			};
 
 		const actions = getCombatantBaseActions(combatant);
-		const bonus = getCombatantBonusActions(combatant);
+		const additional = getCombatantAdditionalActions(combatant);
 		const bonusCurrent = getCombatantBonusCurrent(combatant);
 		const max = actions.max || 3;
 		const pipTypes = getCombatantPipTypes(combatant);
@@ -113,9 +113,9 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 		return {
 			current: actions.current,
 			max,
-			bonus,
+			additional,
 			bonusCurrent,
-			effectiveMax: max + bonus,
+			effectiveMax: max + additional,
 			pipTypes,
 			pipActiveStates,
 		};
@@ -151,25 +151,25 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 		}
 	}
 
-	async function addBonusAction(): Promise<void> {
+	async function addAdditionalAction(): Promise<void> {
 		const combat = getActiveCombatForCurrentScene();
 		const combatantId = getCombatantInCombat()?.id ?? null;
 		if (!combat || !combatantId) return;
 
-		const maxBonusSlots = 10 - actionsData.max;
-		if (actionsData.bonus >= maxBonusSlots) return;
+		const maxAdditionalSlots = 10 - actionsData.max;
+		if (actionsData.additional >= maxAdditionalSlots) return;
 
-		const newBonus = actionsData.bonus + 1;
-		const newBonusCurrent = actionsData.bonusCurrent + 1;
-		const newCurrent = actionsData.pipActiveStates.filter(Boolean).length + newBonusCurrent;
+		const newAdditional = actionsData.additional + 1;
+		const newAdditionalCurrent = actionsData.bonusCurrent + 1;
+		const newCurrent = actionsData.pipActiveStates.filter(Boolean).length + newAdditionalCurrent;
 
 		await queueCombatantMutationWithFreshDocument({
 			combat,
 			combatantId,
 			mutation: async (currentCombatant) => {
 				await currentCombatant.update({
-					'system.actions.base.bonus': newBonus,
-					'system.actions.base.bonusCurrent': newBonusCurrent,
+					'system.actions.base.additional': newAdditional,
+					'system.actions.base.bonusCurrent': newAdditionalCurrent,
 					'system.actions.base.current': newCurrent,
 				} as Record<string, unknown>);
 			},
@@ -249,18 +249,18 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 			const bonusIndex = index - actionsData.max;
 			const isAvailable = bonusIndex < actionsData.bonusCurrent;
 			if (isAvailable) {
-				const newBonusCurrent = Math.max(0, actionsData.bonusCurrent - 1);
+				const newAdditionalCurrent = Math.max(0, actionsData.bonusCurrent - 1);
 				void updatePipState({
-					'system.actions.base.bonusCurrent': newBonusCurrent,
+					'system.actions.base.bonusCurrent': newAdditionalCurrent,
 					'system.actions.base.current':
-						actionsData.pipActiveStates.filter(Boolean).length + newBonusCurrent,
+						actionsData.pipActiveStates.filter(Boolean).length + newAdditionalCurrent,
 				} as Record<string, unknown>);
 			} else {
-				const newBonusCurrent = Math.min(actionsData.bonusCurrent + 1, actionsData.bonus);
+				const newAdditionalCurrent = Math.min(actionsData.bonusCurrent + 1, actionsData.additional);
 				void updatePipState({
-					'system.actions.base.bonusCurrent': newBonusCurrent,
+					'system.actions.base.bonusCurrent': newAdditionalCurrent,
 					'system.actions.base.current':
-						actionsData.pipActiveStates.filter(Boolean).length + newBonusCurrent,
+						actionsData.pipActiveStates.filter(Boolean).length + newAdditionalCurrent,
 				} as Record<string, unknown>);
 			}
 			return;
@@ -419,7 +419,7 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 		// Actions
 		rollInitiative,
 		endTurn,
-		addBonusAction,
+		addAdditionalAction,
 		handlePipClick,
 
 		// Helpers

@@ -1,6 +1,6 @@
 import type { ActionType } from '../../../combat/actionType.js';
 import {
-	getCombatantBonusActions,
+	getCombatantAdditionalActions,
 	getCombatantPipTypes,
 } from '../../../documents/combat/combatantSystem.js';
 import type {
@@ -449,14 +449,14 @@ export function getCombatantOutlineClass(combatant: Combatant.Implementation): s
 export function getActionState(combatant: Combatant.Implementation): {
 	current: number;
 	max: number;
-	bonus: number;
+	additional: number;
 	effectiveMax: number;
 	pipTypes: ActionType[];
 	dominantPipType: ActionType;
 } {
 	const normalizedCurrent = getCombatantCurrentActions(combatant);
 	const normalizedMax = getCombatantMaxActions(combatant);
-	const bonus = getCombatantBonusActions(combatant);
+	const additional = getCombatantAdditionalActions(combatant);
 	const pipTypes = getCombatantPipTypes(combatant);
 
 	// Determine dominant pip type for CT box coloring
@@ -467,8 +467,8 @@ export function getActionState(combatant: Combatant.Implementation): {
 	return {
 		current: normalizedCurrent,
 		max: normalizedMax,
-		bonus,
-		effectiveMax: normalizedMax + bonus,
+		additional,
+		effectiveMax: normalizedMax + additional,
 		pipTypes,
 		dominantPipType,
 	};
