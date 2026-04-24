@@ -51,6 +51,8 @@
 	// Auto-check when forced (no standard pips available)
 	$effect(() => {
 		if (!isForced) return;
+		const currentInspired = untrack(() => useInspiredAction);
+		const currentBane = untrack(() => useBaneAction);
 		// If only one type available, auto-check it
 		if (availableTypedPips.hasInspired && !availableTypedPips.hasBane) {
 			useInspiredAction = true;
@@ -58,7 +60,7 @@
 		} else if (availableTypedPips.hasBane && !availableTypedPips.hasInspired) {
 			useBaneAction = true;
 			useInspiredAction = false;
-		} else if (!useInspiredAction && !useBaneAction) {
+		} else if (!currentInspired && !currentBane) {
 			// Both available but neither checked — default to bane
 			useBaneAction = true;
 		}
@@ -88,7 +90,8 @@
 		let modifier = 0;
 		if (useInspiredAction) modifier = 1;
 		else if (useBaneAction) modifier = -1;
-		selectedRollMode = Math.clamp(userRollMode + modifier, -6, 6);
+		const base = untrack(() => userRollMode);
+		selectedRollMode = Math.clamp(base + modifier, -6, 6);
 	});
 
 	const { damageTypes, hitDice } = CONFIG.NIMBLE;
