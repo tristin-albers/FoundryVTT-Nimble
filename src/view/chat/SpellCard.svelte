@@ -7,7 +7,14 @@
 	import ItemCardEffects from './components/ItemCardEffects.svelte';
 	import Targets from './components/Targets.svelte';
 
-	function getCardSubheading(activation, isCritical, isMiss) {
+	function getActionTypeTag(flags) {
+		const actionType = flags?.nimble?.actionTypeOverride;
+		if (actionType === 'bane') return ' (B)';
+		if (actionType === 'inspired') return ' (I)';
+		return '';
+	}
+
+	function getCardSubheading(activation, isCritical, isMiss, flags) {
 		if (!activation) return null;
 		if (!activation.effects?.length) return null;
 
@@ -16,10 +23,11 @@
 
 		if (!hasDamage && !hasHealing) return null;
 
+		const tag = getActionTypeTag(flags);
 		if (hasDamage) {
-			if (isCritical) return 'Critical Hit';
-			if (isMiss) return 'Miss';
-			return 'Hit';
+			if (isCritical) return `Critical Hit${tag}`;
+			if (isMiss) return `Miss${tag}`;
+			return `Hit${tag}`;
 		}
 
 		return 'Healing';
@@ -39,7 +47,9 @@
 
 	let headerBackgroundColor = $derived(messageDocument.reactive.author.color);
 	let headerTextColor = $derived(calculateHeaderTextColor(headerBackgroundColor));
-	let subheading = $derived(getCardSubheading(activation, isCritical, isMiss));
+	let subheading = $derived(
+		getCardSubheading(activation, isCritical, isMiss, messageDocument.flags),
+	);
 
 	let higherLevelContent = $derived(description.higherLevelEffect);
 	let upcastContent = $derived(tier > 0 ? description.upcastEffect : '');

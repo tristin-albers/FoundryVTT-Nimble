@@ -335,7 +335,7 @@ describe('consumeCombatantAction', () => {
 			actionCost: 2,
 		});
 
-		expect(result).toBe(1);
+		expect(result.remainingActions).toBe(1);
 		expect(updateEmbeddedDocuments).toHaveBeenCalledWith('Combatant', [
 			{ _id: 'c1', 'system.actions.base.current': 1 },
 		]);
@@ -349,7 +349,7 @@ describe('consumeCombatantAction', () => {
 			combatantId: 'c1',
 		});
 
-		expect(result).toBe(2);
+		expect(result.remainingActions).toBe(2);
 		expect(updateEmbeddedDocuments).toHaveBeenCalledWith('Combatant', [
 			{ _id: 'c1', 'system.actions.base.current': 2 },
 		]);
@@ -364,7 +364,7 @@ describe('consumeCombatantAction', () => {
 			actionCost: 0,
 		});
 
-		expect(result).toBe(2);
+		expect(result.remainingActions).toBe(2);
 		expect(updateEmbeddedDocuments).toHaveBeenCalledWith('Combatant', [
 			{ _id: 'c1', 'system.actions.base.current': 2 },
 		]);
@@ -379,7 +379,7 @@ describe('consumeCombatantAction', () => {
 			actionCost: -5,
 		});
 
-		expect(result).toBe(2);
+		expect(result.remainingActions).toBe(2);
 		expect(updateEmbeddedDocuments).toHaveBeenCalledWith('Combatant', [
 			{ _id: 'c1', 'system.actions.base.current': 2 },
 		]);

@@ -14,7 +14,12 @@ import { isCombatantDead } from '#utils/isCombatantDead.js';
 import { getMinionGroupId, getMinionGroupSummaries } from '#utils/minionGrouping.js';
 import { queueCombatantMutationWithFreshDocument } from '#utils/queueCombatantMutationWithFreshDocument.js';
 import { isCombatReadinessEnabled } from '../../settings/combatReadinessSettings.js';
-import { getCombatantBaseActionMax, getCombatantManualSortValue } from './combatantSystem.js';
+import {
+	getCombatantBaseActionMax,
+	getCombatantManualSortValue,
+	getCombatantPipActiveStates,
+	getCombatantPipTypes,
+} from './combatantSystem.js';
 import { getCombatantCurrentActions, logMinionGroupingCombat } from './combatCommon.js';
 import { rollInitiativeForCombatant } from './combatInitiative.js';
 import { performMinionGroupAttack } from './combatMinionAttacks.js';
@@ -491,6 +496,39 @@ class NimbleCombat extends Combat {
 		}, []);
 		if (updates.length < 1) return;
 		await this.updateEmbeddedDocuments('Combatant', updates);
+	}
+
+	async #refillCharacterActionsForTurnStart(
+		combatant: Combatant.Implementation | null,
+	): Promise<void> {
+		if (!isCombatReadinessEnabled()) return;
+		if (!combatant || combatant.type !== 'character') return;
+
+		const combatantId = combatant.id;
+		if (!combatantId) return;
+
+		const pipTypes = getCombatantPipTypes(combatant);
+		const pipActiveStates = getCombatantPipActiveStates(combatant);
+		const update: Record<string, unknown> = { _id: combatantId };
+		let activeCount = 0;
+
+		for (let i = 0; i < 3; i++) {
+			const isActive = pipActiveStates[i] ?? false;
+			const pipType = pipTypes[i] ?? 'standard';
+
+			if (isActive && pipType !== 'standard') {
+				// Unspent bane/inspired: carry over as-is
+				activeCount++;
+			} else {
+				// Spent pip OR standard pip: reset to standard + active
+				update[`system.actions.base.pipType${i}`] = 'standard';
+				update[`system.actions.base.pipActive${i}`] = true;
+				activeCount++;
+			}
+		}
+
+		update['system.actions.base.current'] = activeCount;
+		await this.updateEmbeddedDocuments('Combatant', [update]);
 	}
 
 	async #resetCharacterPipTypesForNewRound(): Promise<void> {
@@ -1122,6 +1160,10 @@ class NimbleCombat extends Combat {
 		if (!intercepted) {
 			await this.#persistAtomicTurnState({ turn: this.turn });
 		}
+
+		// Combat Readiness: refill actions for the combatant whose turn is starting
+		await this.#refillCharacterActionsForTurnStart(this.combatant ?? null);
+
 		return result;
 	}
 

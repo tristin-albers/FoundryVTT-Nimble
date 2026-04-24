@@ -1,5 +1,6 @@
 import type { EffectNode } from '#types/effectTree.js';
 import type { UpcastResult } from '#types/spellScaling.js';
+import type { ActionType } from '../combat/actionType.js';
 import { DamageRoll } from '../dice/DamageRoll.js';
 import { NimbleRoll } from '../dice/NimbleRoll.js';
 import ItemActivationConfigDialog from '../documents/dialogs/ItemActivationConfigDialog.svelte.js';
@@ -198,7 +199,12 @@ class ItemActivationManager {
 		// Get template data
 		const _templateData = this.#getTemplateData();
 
-		return { rolls, activation: this.activationData, rollHidden: dialogData.rollHidden ?? false };
+		return {
+			rolls,
+			activation: this.activationData,
+			rollHidden: dialogData.rollHidden ?? false,
+			actionTypeOverride: dialogData.actionTypeOverride,
+		};
 	}
 
 	/**
@@ -276,6 +282,13 @@ class ItemActivationManager {
 					// resolvedCanCrit above is intentional.
 					const resolvedCanMiss = isAoE ? false : isMinion || (canMiss ?? true);
 					node.rollMode = dialogData.rollMode ?? 0;
+
+					// Apply combat readiness action type modifier
+					if (dialogData.actionTypeOverride === 'bane') {
+						node.rollMode = (node.rollMode ?? 0) - 1;
+					} else if (dialogData.actionTypeOverride === 'inspired') {
+						node.rollMode = (node.rollMode ?? 0) + 1;
+					}
 
 					// Check if item has vicious property
 					const itemSystem = this.#item.system as { properties?: { selected?: string[] } };
@@ -501,6 +514,8 @@ namespace ItemActivationManager {
 		primaryDieModifier?: string;
 		/** Whether to hide the roll from other players. */
 		rollHidden?: boolean;
+		/** Override action type used for combat readiness (bane/inspired/standard). */
+		actionTypeOverride?: ActionType;
 	}
 
 	/**
@@ -524,6 +539,8 @@ namespace ItemActivationManager {
 		};
 		/** Whether to hide the roll. */
 		rollHidden?: boolean;
+		/** Action type override from combat readiness (bane/inspired/standard). */
+		actionTypeOverride?: ActionType;
 	}
 }
 

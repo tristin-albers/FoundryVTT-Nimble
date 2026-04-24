@@ -885,6 +885,23 @@
 					"ready": "Ready",
 					"hesitant": "Hesitant"
 				},
+				"actionTypeChoice": {
+					"label": "Action Type",
+					"useStandard": "Standard Action",
+					"useBane": "Bane Action (B)",
+					"useInspired": "Inspired Action (I)",
+					"forced": "No standard actions remaining — choose an action type"
+				},
+				"actionTypeModifier": {
+					"baneRoll": "(B) Disadvantage 1",
+					"inspiredRoll": "(I) Advantage 1",
+					"baneDefend": "(B) −KEY Armor",
+					"inspiredDefend": "(I) +KEY Armor",
+					"baneMove": "(B) −2 Speed",
+					"inspiredMove": "(I) +2 Speed"
+				},
+				"moveActionBane": "<p><strong>{name}</strong> used a <strong>Bane action (B)</strong> to move. <em>−2 Speed</em></p>",
+				"moveActionInspired": "<p><strong>{name}</strong> used an <strong>Inspired action (I)</strong> to move. <em>+2 Speed</em></p>",
 				"actionsHeader": "Actions",
 				"moveAction": "<p><strong>{name}</strong> used an action to move.</p>",
 				"reactionLabels": {

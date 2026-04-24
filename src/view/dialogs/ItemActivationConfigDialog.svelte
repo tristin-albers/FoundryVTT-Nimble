@@ -1,6 +1,13 @@
 <script>
 	import { untrack } from 'svelte';
+	import { getActiveCombatForCurrentScene } from '../../utils/combatState.js';
+	import { isCombatReadinessEnabled } from '../../settings/combatReadinessSettings.js';
+	import {
+		getCombatantPipActiveStates,
+		getCombatantPipTypes,
+	} from '../../documents/combat/combatantSystem.js';
 	import { flattenEffectsTree } from '../../utils/treeManipulation/flattenEffectsTree.js';
+	import localize from '../../utils/localize.js';
 	import RollModeConfig from './components/RollModeConfig.svelte';
 	const { skillCheckDialog } = CONFIG.NIMBLE;
 
@@ -10,6 +17,66 @@
 	let primaryDieValue = $state();
 	let primaryDieModifier = $state();
 	let shouldRollBeHidden = $state(!!game.settings.get('nimble', 'hideRolls'));
+	let selectedActionType = $state('standard');
+
+	// Detect if action type choice is needed
+	let actionTypeOptions = $derived.by(() => {
+		if (!isCombatReadinessEnabled()) return [];
+
+		const combat = getActiveCombatForCurrentScene();
+		if (!combat?.started) return [];
+
+		const combatant = combat.combatants.find((entry) => entry.actorId === actor.id);
+		if (!combatant || combatant.type !== 'character') return [];
+
+		const pipTypes = getCombatantPipTypes(combatant);
+		const pipActiveStates = getCombatantPipActiveStates(combatant);
+
+		const hasStandard = pipActiveStates.some((active, i) => active && pipTypes[i] === 'standard');
+		const hasBane = pipActiveStates.some((active, i) => active && pipTypes[i] === 'bane');
+		const hasInspired = pipActiveStates.some((active, i) => active && pipTypes[i] === 'inspired');
+
+		// If standard pips are available, default to standard (no forced choice)
+		if (hasStandard) {
+			const options = [
+				{
+					value: 'standard',
+					label: localize('NIMBLE.ui.heroicActions.actionTypeChoice.useStandard'),
+				},
+			];
+			if (hasBane)
+				options.push({
+					value: 'bane',
+					label: localize('NIMBLE.ui.heroicActions.actionTypeChoice.useBane'),
+				});
+			if (hasInspired)
+				options.push({
+					value: 'inspired',
+					label: localize('NIMBLE.ui.heroicActions.actionTypeChoice.useInspired'),
+				});
+			// Only show selector if there are typed options beyond standard
+			return options.length > 1 ? options : [];
+		}
+
+		// No standard pips — force choice between available typed pips
+		const options = [];
+		if (hasBane)
+			options.push({
+				value: 'bane',
+				label: localize('NIMBLE.ui.heroicActions.actionTypeChoice.useBane'),
+			});
+		if (hasInspired)
+			options.push({
+				value: 'inspired',
+				label: localize('NIMBLE.ui.heroicActions.actionTypeChoice.useInspired'),
+			});
+		return options;
+	});
+
+	let showActionTypeSelector = $derived(actionTypeOptions.length > 0);
+	let isForced = $derived(
+		actionTypeOptions.length > 0 && !actionTypeOptions.some((o) => o.value === 'standard'),
+	);
 
 	const { damageTypes, hitDice } = CONFIG.NIMBLE;
 
@@ -87,6 +154,24 @@
 <article class="nimble-sheet__body" style="--nimble-sheet-body-padding-block-start: 0.5rem">
 	<RollModeConfig bind:selectedRollMode />
 
+	{#if showActionTypeSelector}
+		<div class="nimble-roll-modifiers-container nimble-action-type-selector">
+			<label>
+				{localize('NIMBLE.ui.heroicActions.actionTypeChoice.label')}:
+				<select bind:value={selectedActionType}>
+					{#each actionTypeOptions as option}
+						<option value={option.value}>{option.label}</option>
+					{/each}
+				</select>
+			</label>
+			{#if isForced}
+				<span class="nimble-action-type-forced">
+					{localize('NIMBLE.ui.heroicActions.actionTypeChoice.forced')}
+				</span>
+			{/if}
+		</div>
+	{/if}
+
 	<div class="nimble-roll-modifiers-container">
 		<div class="nimble-roll-modifiers">
 			<label>
@@ -163,6 +248,7 @@
 				primaryDieValue: primaryDieValue,
 				primaryDieModifier: primaryDieModifier,
 				rollHidden: shouldRollBeHidden,
+				actionTypeOverride: selectedActionType !== 'standard' ? selectedActionType : undefined,
 			});
 		}}
 	>
@@ -201,6 +287,29 @@
 				flex: 1;
 			}
 		}
+	}
+
+	.nimble-action-type-selector {
+		flex-direction: column;
+
+		label {
+			display: flex;
+			align-items: center;
+			gap: 0.5rem;
+
+			select {
+				flex: 1;
+				padding: 0.35rem 0.5rem;
+				border: 1px solid var(--nimble-border-color);
+				border-radius: var(--nimble-border-radius);
+			}
+		}
+	}
+
+	.nimble-action-type-forced {
+		font-size: 0.8rem;
+		font-style: italic;
+		color: hsl(45, 70%, 55%);
 	}
 
 	.nimble-roll-formulas {

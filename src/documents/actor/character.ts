@@ -7,6 +7,7 @@ import type { NimbleSubclassItem } from '#documents/item/subclass.js';
 import type { SkillKeyType } from '#types/skillKey.js';
 import { getHighestSpellTier } from '#utils/spell/getHighestSpellTier.ts';
 import CharacterMetaConfigDialog from '#view/dialogs/CharacterMetaConfigDialog.svelte';
+import type { ActionType } from '../../combat/actionType.js';
 import getDeterministicBonus from '../../dice/getDeterministicBonus.ts';
 import { NimbleRoll } from '../../dice/NimbleRoll.js';
 import { HitDiceManager, incrementDieSize } from '../../managers/HitDiceManager.js';
@@ -1599,10 +1600,16 @@ export class NimbleCharacter extends NimbleBaseActor<'character'> {
 						(entry: Combatant.Implementation) => entry.actorId === this.id,
 					) ?? null;
 				if (combat?.started && combatant?.id) {
+					const actionTypeOverride = (
+						result as ChatMessage & {
+							flags?: { nimble?: { actionTypeOverride?: ActionType } };
+						}
+					).flags?.nimble?.actionTypeOverride;
 					await consumeCombatantAction({
 						combat,
 						combatantId: combatant.id,
 						actionCost: activation.cost.quantity ?? 1,
+						preferredActionType: actionTypeOverride,
 					});
 				}
 			}

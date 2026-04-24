@@ -1,3 +1,9 @@
+import type { ActionType } from '../combat/actionType.js';
+import {
+	getCombatantPipActiveStates,
+	getCombatantPipTypes,
+} from '../documents/combat/combatantSystem.js';
+import { isCombatReadinessEnabled } from '../settings/combatReadinessSettings.js';
 import { combatantActionMutationQueue } from './combatantActionMutationQueue.js';
 
 export const COMBATANT_ACTIONS_CURRENT_PATH = 'system.actions.base.current';
@@ -177,28 +183,111 @@ export async function requestAdvanceCombatTurn(params: {
 	return true;
 }
 
+export interface ConsumeActionResult {
+	remainingActions: number;
+	consumedActionType: ActionType;
+}
+
+/**
+ * Find the best pip to consume. Priority: standard first, then bane, then inspired.
+ * If `preferredType` is provided, consume that type specifically.
+ * Returns the pip index to consume, or -1 if none available.
+ */
+function findPipToConsume(
+	pipTypes: ActionType[],
+	pipActiveStates: boolean[],
+	preferredType?: ActionType,
+): number {
+	if (preferredType) {
+		for (let i = 0; i < 3; i++) {
+			if (pipActiveStates[i] && pipTypes[i] === preferredType) return i;
+		}
+		return -1;
+	}
+
+	// Priority: standard > bane > inspired
+	for (let i = 0; i < 3; i++) {
+		if (pipActiveStates[i] && pipTypes[i] === 'standard') return i;
+	}
+	for (let i = 0; i < 3; i++) {
+		if (pipActiveStates[i] && pipTypes[i] === 'bane') return i;
+	}
+	for (let i = 0; i < 3; i++) {
+		if (pipActiveStates[i] && pipTypes[i] === 'inspired') return i;
+	}
+	return -1;
+}
+
+/**
+ * Check what typed actions are available (active bane/inspired pips with no standard pips).
+ * Returns the types that are available, or empty if standard pips exist.
+ */
+export function getAvailableTypedActions(combatant: Combatant.Implementation): ActionType[] {
+	if (!isCombatReadinessEnabled()) return [];
+
+	const pipTypes = getCombatantPipTypes(combatant);
+	const pipActiveStates = getCombatantPipActiveStates(combatant);
+
+	const hasStandard = pipActiveStates.some((active, i) => active && pipTypes[i] === 'standard');
+	if (hasStandard) return [];
+
+	const available: ActionType[] = [];
+	if (pipActiveStates.some((active, i) => active && pipTypes[i] === 'bane')) {
+		available.push('bane');
+	}
+	if (pipActiveStates.some((active, i) => active && pipTypes[i] === 'inspired')) {
+		available.push('inspired');
+	}
+	return available;
+}
+
 export async function consumeCombatantAction(params: {
 	combat: Combat;
 	combatantId: string;
 	fallbackCombatant?: Combatant.Implementation | null;
 	actionCost?: number;
-}): Promise<number> {
+	preferredActionType?: ActionType;
+}): Promise<ConsumeActionResult> {
 	const combatant =
 		params.combat.combatants.get(params.combatantId) ?? params.fallbackCombatant ?? null;
-	if (!combatant) return 0;
+	if (!combatant) return { remainingActions: 0, consumedActionType: 'standard' };
 
 	const currentActions = getCombatantCurrentActions(combatant);
-	if (currentActions < 1) return 0;
+	if (currentActions < 1) return { remainingActions: 0, consumedActionType: 'standard' };
 
 	const cost = Number(params.actionCost ?? 1);
 	const normalizedCost = Number.isFinite(cost) && cost >= 1 ? cost : 1;
+
+	if (isCombatReadinessEnabled() && combatant.type === 'character') {
+		const pipTypes = getCombatantPipTypes(combatant);
+		const pipActiveStates = getCombatantPipActiveStates(combatant);
+		const actionUpdate: Record<string, unknown> = { _id: params.combatantId };
+		let consumed: ActionType = 'standard';
+
+		// Consume `normalizedCost` pips
+		for (let c = 0; c < normalizedCost; c++) {
+			const pipIndex = findPipToConsume(pipTypes, pipActiveStates, params.preferredActionType);
+			if (pipIndex < 0) break;
+
+			consumed = pipTypes[pipIndex];
+			pipActiveStates[pipIndex] = false;
+			actionUpdate[`system.actions.base.pipActive${pipIndex}`] = false;
+		}
+
+		const nextActions = pipActiveStates.filter(Boolean).length;
+		actionUpdate[COMBATANT_ACTIONS_CURRENT_PATH] = nextActions;
+		await params.combat.updateEmbeddedDocuments('Combatant', [actionUpdate]);
+		return { remainingActions: nextActions, consumedActionType: consumed };
+	}
+
+	// Standard (non-variant) path
 	const nextActions = Math.max(0, currentActions - normalizedCost);
 	const actionUpdate: Record<string, unknown> = {
 		_id: params.combatantId,
 		[COMBATANT_ACTIONS_CURRENT_PATH]: nextActions,
 	};
 	await params.combat.updateEmbeddedDocuments('Combatant', [actionUpdate]);
-	return nextActions;
+	return { remainingActions: nextActions, consumedActionType: 'standard' };
 }
 
 export async function maybeAdvanceTurnForCombatant(params: {
