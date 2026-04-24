@@ -80,6 +80,17 @@
 		useInspiredAction ? 'inspired' : useBaneAction ? 'bane' : 'standard',
 	);
 
+	// Track the user's manual roll mode separately from action type modifier
+	let userRollMode = $state(untrack(() => Math.clamp(Number(data.rollMode ?? 0), -6, 6)));
+
+	// When action type changes, update the slider to reflect the combined value
+	$effect(() => {
+		let modifier = 0;
+		if (useInspiredAction) modifier = 1;
+		else if (useBaneAction) modifier = -1;
+		selectedRollMode = Math.clamp(userRollMode + modifier, -6, 6);
+	});
+
 	const { damageTypes, hitDice } = CONFIG.NIMBLE;
 
 	// Get all damage effects from the item's activation effects
@@ -159,23 +170,33 @@
 	{#if showInspiredCheckbox || showBaneCheckbox}
 		<div class="nimble-roll-modifiers-container nimble-action-type-selector">
 			{#if showInspiredCheckbox}
-				<label class="nimble-action-type-checkbox">
+				<label class="nimble-action-type-checkbox nimble-action-type-checkbox--inspired">
 					<input
 						type="checkbox"
 						bind:checked={useInspiredAction}
 						onchange={() => onInspiredChange(useInspiredAction)}
 					/>
 					{localize('NIMBLE.ui.heroicActions.actionTypeChoice.useInspired')}
+					{#if useInspiredAction}
+						<span class="nimble-action-type-effect nimble-action-type-effect--inspired"
+							>— Adv. on this attack</span
+						>
+					{/if}
 				</label>
 			{/if}
 			{#if showBaneCheckbox}
-				<label class="nimble-action-type-checkbox">
+				<label class="nimble-action-type-checkbox nimble-action-type-checkbox--bane">
 					<input
 						type="checkbox"
 						bind:checked={useBaneAction}
 						onchange={() => onBaneChange(useBaneAction)}
 					/>
 					{localize('NIMBLE.ui.heroicActions.actionTypeChoice.useBane')}
+					{#if useBaneAction}
+						<span class="nimble-action-type-effect nimble-action-type-effect--bane"
+							>— Disadv. on this attack</span
+						>
+					{/if}
 				</label>
 			{/if}
 			{#if isForced}
@@ -313,6 +334,19 @@
 		align-items: center;
 		gap: 0.5rem;
 		cursor: pointer;
+	}
+
+	.nimble-action-type-effect {
+		font-size: 0.8rem;
+		font-style: italic;
+
+		&--inspired {
+			color: hsl(210, 60%, 75%);
+		}
+
+		&--bane {
+			color: hsl(280, 50%, 70%);
+		}
 	}
 
 	.nimble-action-type-forced {

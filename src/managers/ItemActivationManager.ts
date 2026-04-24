@@ -281,14 +281,8 @@ class ItemActivationManager {
 					// Minions cannot crit but can still miss — the asymmetry with
 					// resolvedCanCrit above is intentional.
 					const resolvedCanMiss = isAoE ? false : isMinion || (canMiss ?? true);
+					// rollMode already includes action type modifier from dialog
 					node.rollMode = dialogData.rollMode ?? 0;
-
-					// Apply combat readiness action type modifier
-					if (dialogData.actionTypeOverride === 'bane') {
-						node.rollMode = (node.rollMode ?? 0) - 1;
-					} else if (dialogData.actionTypeOverride === 'inspired') {
-						node.rollMode = (node.rollMode ?? 0) + 1;
-					}
 
 					// Check if item has vicious property
 					const itemSystem = this.#item.system as { properties?: { selected?: string[] } };
