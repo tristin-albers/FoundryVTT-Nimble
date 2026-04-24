@@ -262,8 +262,7 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 			const newActiveStates = [...actionsData.pipActiveStates];
 			newActiveStates[index] = true;
 			const newCurrent =
-				newActiveStates.filter(Boolean).length +
-				Math.max(0, actionsData.current - actionsData.pipActiveStates.filter(Boolean).length);
+				Math.min(newActiveStates.filter(Boolean).length, actionsData.max) + actionsData.bonus;
 			void updatePipState({
 				[`system.actions.base.pipType${index}`]: newType,
 				[`system.actions.base.pipActive${index}`]: true,
@@ -280,8 +279,7 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 			const newActiveStates = [...actionsData.pipActiveStates];
 			newActiveStates[index] = true;
 			const newCurrent =
-				newActiveStates.filter(Boolean).length +
-				Math.max(0, actionsData.current - actionsData.pipActiveStates.filter(Boolean).length);
+				Math.min(newActiveStates.filter(Boolean).length, actionsData.max) + actionsData.bonus;
 			void updatePipState({
 				[`system.actions.base.pipType${index}`]: newType,
 				[`system.actions.base.pipActive${index}`]: true,
@@ -294,12 +292,10 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 		const isActive = actionsData.pipActiveStates[index] ?? false;
 		const newActiveStates = [...actionsData.pipActiveStates];
 		newActiveStates[index] = !isActive;
-		// Preserve bonus pip count in current
-		const basePipActiveCount = newActiveStates.filter(Boolean).length;
-		const bonusActive = Math.max(
-			0,
-			actionsData.current - actionsData.pipActiveStates.filter(Boolean).length,
-		);
+		// Base pip active count (capped at max to not bleed into bonus territory)
+		const basePipActiveCount = Math.min(newActiveStates.filter(Boolean).length, actionsData.max);
+		// Bonus pips stay exactly as they are
+		const bonusActive = actionsData.bonus;
 		const newCurrent = basePipActiveCount + bonusActive;
 
 		const updates: Record<string, unknown> = {
