@@ -48,12 +48,32 @@
 			(availableTypedPips.hasBane || availableTypedPips.hasInspired),
 	);
 
+	// Auto-check when forced (no standard pips available)
+	$effect(() => {
+		if (!isForced) return;
+		// If only one type available, auto-check it
+		if (availableTypedPips.hasInspired && !availableTypedPips.hasBane) {
+			useInspiredAction = true;
+			useBaneAction = false;
+		} else if (availableTypedPips.hasBane && !availableTypedPips.hasInspired) {
+			useBaneAction = true;
+			useInspiredAction = false;
+		} else if (!useInspiredAction && !useBaneAction) {
+			// Both available but neither checked — default to bane
+			useBaneAction = true;
+		}
+	});
+
 	// Ensure mutual exclusivity — can't use both bane and inspired
 	function onBaneChange(checked) {
 		if (checked) useInspiredAction = false;
+		// When forced, prevent unchecking if it's the only option
+		if (!checked && isForced && !useInspiredAction) useBaneAction = true;
 	}
 	function onInspiredChange(checked) {
 		if (checked) useBaneAction = false;
+		// When forced, prevent unchecking if it's the only option
+		if (!checked && isForced && !useBaneAction) useInspiredAction = true;
 	}
 
 	let selectedActionType = $derived(
