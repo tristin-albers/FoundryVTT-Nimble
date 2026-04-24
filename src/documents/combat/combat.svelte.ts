@@ -540,16 +540,28 @@ class NimbleCombat extends Combat {
 			const combatantId = combatant.id;
 			if (!combatantId) continue;
 
-			updates.push({
-				_id: combatantId,
-				'system.actions.base.pipType0': 'standard',
-				'system.actions.base.pipType1': 'standard',
-				'system.actions.base.pipType2': 'standard',
-				'system.actions.base.pipActive0': true,
-				'system.actions.base.pipActive1': true,
-				'system.actions.base.pipActive2': true,
-				'system.actions.base.current': 3,
-			});
+			const pipTypes = getCombatantPipTypes(combatant);
+			const pipActiveStates = getCombatantPipActiveStates(combatant);
+			const update: Record<string, unknown> = { _id: combatantId };
+			let activeCount = 0;
+
+			for (let i = 0; i < 3; i++) {
+				const isActive = pipActiveStates[i] ?? false;
+				const pipType = pipTypes[i] ?? 'standard';
+
+				if (isActive && pipType !== 'standard') {
+					// Unspent bane/inspired: carry over as-is
+					activeCount++;
+				} else {
+					// Spent pip OR standard pip: reset to standard + active
+					update[`system.actions.base.pipType${i}`] = 'standard';
+					update[`system.actions.base.pipActive${i}`] = true;
+					activeCount++;
+				}
+			}
+
+			update['system.actions.base.current'] = activeCount;
+			updates.push(update);
 		}
 
 		if (updates.length > 0) {
