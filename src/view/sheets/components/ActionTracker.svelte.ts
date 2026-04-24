@@ -235,36 +235,55 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 	function handlePipClick(index: number, event?: MouseEvent): void {
 		if (!hasInitiative) return;
 
-		// Ctrl+click: toggle pip type to bane
+		// Ctrl+click: set pip to bane and activate it
 		if (event?.ctrlKey || event?.metaKey) {
 			const currentType = actionsData.pipTypes[index];
-			const newType: ActionType = currentType === 'bane' ? 'standard' : 'bane';
+			const isActive = actionsData.pipActiveStates[index] ?? false;
+			const newType: ActionType = currentType === 'bane' && isActive ? 'standard' : 'bane';
+			const newActiveStates = [...actionsData.pipActiveStates];
+			newActiveStates[index] = true;
+			const newCurrent = newActiveStates.filter(Boolean).length;
 			void updatePipState({
 				[`system.actions.base.pipType${index}`]: newType,
+				[`system.actions.base.pipActive${index}`]: true,
+				'system.actions.base.current': newCurrent,
 			} as Record<string, unknown>);
 			return;
 		}
 
-		// Shift+click: toggle pip type to inspired
+		// Shift+click: set pip to inspired and activate it
 		if (event?.shiftKey) {
 			const currentType = actionsData.pipTypes[index];
-			const newType: ActionType = currentType === 'inspired' ? 'standard' : 'inspired';
+			const isActive = actionsData.pipActiveStates[index] ?? false;
+			const newType: ActionType = currentType === 'inspired' && isActive ? 'standard' : 'inspired';
+			const newActiveStates = [...actionsData.pipActiveStates];
+			newActiveStates[index] = true;
+			const newCurrent = newActiveStates.filter(Boolean).length;
 			void updatePipState({
 				[`system.actions.base.pipType${index}`]: newType,
+				[`system.actions.base.pipActive${index}`]: true,
+				'system.actions.base.current': newCurrent,
 			} as Record<string, unknown>);
 			return;
 		}
 
-		// Normal click: toggle this pip's active state and sync current count
+		// Normal click: toggle active state. When restoring, always set type to standard.
 		const isActive = actionsData.pipActiveStates[index] ?? false;
 		const newActiveStates = [...actionsData.pipActiveStates];
 		newActiveStates[index] = !isActive;
 		const newCurrent = newActiveStates.filter(Boolean).length;
 
-		void updatePipState({
+		const updates: Record<string, unknown> = {
 			[`system.actions.base.pipActive${index}`]: !isActive,
 			'system.actions.base.current': newCurrent,
-		} as Record<string, unknown>);
+		};
+
+		// Bug fix #1: restoring (clicking empty pip) always sets type to standard
+		if (!isActive) {
+			updates[`system.actions.base.pipType${index}`] = 'standard';
+		}
+
+		void updatePipState(updates);
 	}
 
 	function getPipAriaLabel(index: number): string {

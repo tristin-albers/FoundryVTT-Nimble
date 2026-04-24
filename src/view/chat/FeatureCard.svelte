@@ -7,19 +7,20 @@
 	import ItemCardEffects from './components/ItemCardEffects.svelte';
 	import Targets from './components/Targets.svelte';
 
-	function getActionTypeTag(flags) {
+	function getActionTypeTag(messageDoc) {
+		const flags = messageDoc?.flags ?? messageDoc?.reactive?.flags ?? {};
 		const actionType = flags?.nimble?.actionTypeOverride;
 		if (actionType === 'bane') return ' (B)';
 		if (actionType === 'inspired') return ' (I)';
 		return '';
 	}
 
-	function getCardSubheading(activation, isCritical, isMiss, flags) {
+	function getCardSubheading(activation, isCritical, isMiss, messageDoc) {
 		if (!activation) return null;
 		if (!activation.effects?.length) return null;
 		if (!activation.effects.some((node) => node.type === 'damage')) return null;
 
-		const tag = getActionTypeTag(flags);
+		const tag = getActionTypeTag(messageDoc);
 		if (isCritical) return `Critical Hit${tag}`;
 		if (isMiss) return `Miss${tag}`;
 		return `Hit${tag}`;
@@ -46,9 +47,7 @@
 		attackDistance,
 	} = $derived(messageDocument.reactive.system);
 
-	let subheading = $derived(
-		getCardSubheading(activation, isCritical, isMiss, messageDocument.flags),
-	);
+	let subheading = $derived(getCardSubheading(activation, isCritical, isMiss, messageDocument));
 	let attackTypeLabel = $derived(getAttackTypeLabel(attackType, attackDistance));
 
 	const headerBackgroundColor = $derived(messageDocument.reactive.author.color);

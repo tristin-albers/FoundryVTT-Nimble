@@ -17,65 +17,48 @@
 	let primaryDieValue = $state();
 	let primaryDieModifier = $state();
 	let shouldRollBeHidden = $state(!!game.settings.get('nimble', 'hideRolls'));
-	let selectedActionType = $state('standard');
+	let useInspiredAction = $state(false);
+	let useBaneAction = $state(false);
 
-	// Detect if action type choice is needed
-	let actionTypeOptions = $derived.by(() => {
-		if (!isCombatReadinessEnabled()) return [];
+	// Detect available typed pips
+	let availableTypedPips = $derived.by(() => {
+		if (!isCombatReadinessEnabled())
+			return { hasBane: false, hasInspired: false, hasStandard: true };
 
 		const combat = getActiveCombatForCurrentScene();
-		if (!combat?.started) return [];
+		if (!combat?.started) return { hasBane: false, hasInspired: false, hasStandard: true };
 
 		const combatant = combat.combatants.find((entry) => entry.actorId === actor.id);
-		if (!combatant || combatant.type !== 'character') return [];
+		if (!combatant || combatant.type !== 'character')
+			return { hasBane: false, hasInspired: false, hasStandard: true };
 
 		const pipTypes = getCombatantPipTypes(combatant);
 		const pipActiveStates = getCombatantPipActiveStates(combatant);
 
-		const hasStandard = pipActiveStates.some((active, i) => active && pipTypes[i] === 'standard');
-		const hasBane = pipActiveStates.some((active, i) => active && pipTypes[i] === 'bane');
-		const hasInspired = pipActiveStates.some((active, i) => active && pipTypes[i] === 'inspired');
-
-		// If standard pips are available, default to standard (no forced choice)
-		if (hasStandard) {
-			const options = [
-				{
-					value: 'standard',
-					label: localize('NIMBLE.ui.heroicActions.actionTypeChoice.useStandard'),
-				},
-			];
-			if (hasBane)
-				options.push({
-					value: 'bane',
-					label: localize('NIMBLE.ui.heroicActions.actionTypeChoice.useBane'),
-				});
-			if (hasInspired)
-				options.push({
-					value: 'inspired',
-					label: localize('NIMBLE.ui.heroicActions.actionTypeChoice.useInspired'),
-				});
-			// Only show selector if there are typed options beyond standard
-			return options.length > 1 ? options : [];
-		}
-
-		// No standard pips — force choice between available typed pips
-		const options = [];
-		if (hasBane)
-			options.push({
-				value: 'bane',
-				label: localize('NIMBLE.ui.heroicActions.actionTypeChoice.useBane'),
-			});
-		if (hasInspired)
-			options.push({
-				value: 'inspired',
-				label: localize('NIMBLE.ui.heroicActions.actionTypeChoice.useInspired'),
-			});
-		return options;
+		return {
+			hasBane: pipActiveStates.some((active, i) => active && pipTypes[i] === 'bane'),
+			hasInspired: pipActiveStates.some((active, i) => active && pipTypes[i] === 'inspired'),
+			hasStandard: pipActiveStates.some((active, i) => active && pipTypes[i] === 'standard'),
+		};
 	});
 
-	let showActionTypeSelector = $derived(actionTypeOptions.length > 0);
+	let showBaneCheckbox = $derived(availableTypedPips.hasBane);
+	let showInspiredCheckbox = $derived(availableTypedPips.hasInspired);
 	let isForced = $derived(
-		actionTypeOptions.length > 0 && !actionTypeOptions.some((o) => o.value === 'standard'),
+		!availableTypedPips.hasStandard &&
+			(availableTypedPips.hasBane || availableTypedPips.hasInspired),
+	);
+
+	// Ensure mutual exclusivity — can't use both bane and inspired
+	function onBaneChange(checked) {
+		if (checked) useInspiredAction = false;
+	}
+	function onInspiredChange(checked) {
+		if (checked) useBaneAction = false;
+	}
+
+	let selectedActionType = $derived(
+		useInspiredAction ? 'inspired' : useBaneAction ? 'bane' : 'standard',
 	);
 
 	const { damageTypes, hitDice } = CONFIG.NIMBLE;
@@ -154,16 +137,28 @@
 <article class="nimble-sheet__body" style="--nimble-sheet-body-padding-block-start: 0.5rem">
 	<RollModeConfig bind:selectedRollMode />
 
-	{#if showActionTypeSelector}
+	{#if showInspiredCheckbox || showBaneCheckbox}
 		<div class="nimble-roll-modifiers-container nimble-action-type-selector">
-			<label>
-				{localize('NIMBLE.ui.heroicActions.actionTypeChoice.label')}:
-				<select bind:value={selectedActionType}>
-					{#each actionTypeOptions as option}
-						<option value={option.value}>{option.label}</option>
-					{/each}
-				</select>
-			</label>
+			{#if showInspiredCheckbox}
+				<label class="nimble-action-type-checkbox">
+					<input
+						type="checkbox"
+						bind:checked={useInspiredAction}
+						onchange={() => onInspiredChange(useInspiredAction)}
+					/>
+					{localize('NIMBLE.ui.heroicActions.actionTypeChoice.useInspired')}
+				</label>
+			{/if}
+			{#if showBaneCheckbox}
+				<label class="nimble-action-type-checkbox">
+					<input
+						type="checkbox"
+						bind:checked={useBaneAction}
+						onchange={() => onBaneChange(useBaneAction)}
+					/>
+					{localize('NIMBLE.ui.heroicActions.actionTypeChoice.useBane')}
+				</label>
+			{/if}
 			{#if isForced}
 				<span class="nimble-action-type-forced">
 					{localize('NIMBLE.ui.heroicActions.actionTypeChoice.forced')}
@@ -291,19 +286,14 @@
 
 	.nimble-action-type-selector {
 		flex-direction: column;
+		gap: 0.5rem;
+	}
 
-		label {
-			display: flex;
-			align-items: center;
-			gap: 0.5rem;
-
-			select {
-				flex: 1;
-				padding: 0.35rem 0.5rem;
-				border: 1px solid var(--nimble-border-color);
-				border-radius: var(--nimble-border-radius);
-			}
-		}
+	.nimble-action-type-checkbox {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		cursor: pointer;
 	}
 
 	.nimble-action-type-forced {

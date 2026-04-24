@@ -205,14 +205,14 @@ function findPipToConsume(
 		return -1;
 	}
 
-	// Priority: standard > bane > inspired
-	for (let i = 0; i < 3; i++) {
+	// Priority: standard > bane > inspired (search from last slot first to match old behavior)
+	for (let i = 2; i >= 0; i--) {
 		if (pipActiveStates[i] && pipTypes[i] === 'standard') return i;
 	}
-	for (let i = 0; i < 3; i++) {
+	for (let i = 2; i >= 0; i--) {
 		if (pipActiveStates[i] && pipTypes[i] === 'bane') return i;
 	}
-	for (let i = 0; i < 3; i++) {
+	for (let i = 2; i >= 0; i--) {
 		if (pipActiveStates[i] && pipTypes[i] === 'inspired') return i;
 	}
 	return -1;
