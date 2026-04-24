@@ -232,6 +232,20 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 		});
 	}
 
+	/**
+	 * Compute the number of currently active bonus pips from ground truth.
+	 * Bonus pips are tracked positionally: indices >= max that are < current.
+	 */
+	function getActiveBonusCount(): number {
+		const baseActive = actionsData.pipActiveStates.filter(Boolean).length;
+		return Math.max(0, actionsData.current - baseActive);
+	}
+
+	/** Compute new current from new base pip states + preserved bonus active count. */
+	function computeNewCurrent(newBaseActiveCount: number, bonusActive: number): number {
+		return newBaseActiveCount + bonusActive;
+	}
+
 	function handlePipClick(index: number, event?: MouseEvent): void {
 		if (!hasInitiative) return;
 
@@ -254,6 +268,9 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 			return;
 		}
 
+		// Snapshot bonus active count before any changes
+		const bonusActive = getActiveBonusCount();
+
 		// Ctrl+click: set pip to bane and activate it
 		if (event?.ctrlKey || event?.metaKey) {
 			const currentType = actionsData.pipTypes[index];
@@ -261,12 +278,13 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 			const newType: ActionType = currentType === 'bane' && isActive ? 'standard' : 'bane';
 			const newActiveStates = [...actionsData.pipActiveStates];
 			newActiveStates[index] = true;
-			const newCurrent =
-				Math.min(newActiveStates.filter(Boolean).length, actionsData.max) + actionsData.bonus;
 			void updatePipState({
 				[`system.actions.base.pipType${index}`]: newType,
 				[`system.actions.base.pipActive${index}`]: true,
-				'system.actions.base.current': newCurrent,
+				'system.actions.base.current': computeNewCurrent(
+					newActiveStates.filter(Boolean).length,
+					bonusActive,
+				),
 			} as Record<string, unknown>);
 			return;
 		}
@@ -278,12 +296,13 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 			const newType: ActionType = currentType === 'inspired' && isActive ? 'standard' : 'inspired';
 			const newActiveStates = [...actionsData.pipActiveStates];
 			newActiveStates[index] = true;
-			const newCurrent =
-				Math.min(newActiveStates.filter(Boolean).length, actionsData.max) + actionsData.bonus;
 			void updatePipState({
 				[`system.actions.base.pipType${index}`]: newType,
 				[`system.actions.base.pipActive${index}`]: true,
-				'system.actions.base.current': newCurrent,
+				'system.actions.base.current': computeNewCurrent(
+					newActiveStates.filter(Boolean).length,
+					bonusActive,
+				),
 			} as Record<string, unknown>);
 			return;
 		}
@@ -292,15 +311,13 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 		const isActive = actionsData.pipActiveStates[index] ?? false;
 		const newActiveStates = [...actionsData.pipActiveStates];
 		newActiveStates[index] = !isActive;
-		// Base pip active count (capped at max to not bleed into bonus territory)
-		const basePipActiveCount = Math.min(newActiveStates.filter(Boolean).length, actionsData.max);
-		// Bonus pips stay exactly as they are
-		const bonusActive = actionsData.bonus;
-		const newCurrent = basePipActiveCount + bonusActive;
 
 		const updates: Record<string, unknown> = {
 			[`system.actions.base.pipActive${index}`]: !isActive,
-			'system.actions.base.current': newCurrent,
+			'system.actions.base.current': computeNewCurrent(
+				newActiveStates.filter(Boolean).length,
+				bonusActive,
+			),
 		};
 
 		// Restoring (clicking empty pip) always sets type to standard
