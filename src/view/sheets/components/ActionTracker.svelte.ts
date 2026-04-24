@@ -4,6 +4,7 @@ import type { NimbleCharacter } from '#documents/actor/character.js';
 import {
 	getCombatantBaseActions,
 	getCombatantBonusActions,
+	getCombatantBonusCurrent,
 	getCombatantPipActiveStates,
 	getCombatantPipTypes,
 } from '#documents/combat/combatantSystem.js';
@@ -24,6 +25,7 @@ interface ActionsData {
 	current: number;
 	max: number;
 	bonus: number;
+	bonusCurrent: number;
 	effectiveMax: number;
 	pipTypes: ActionType[];
 	pipActiveStates: boolean[];
@@ -96,6 +98,7 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 				current: 0,
 				max: 3,
 				bonus: 0,
+				bonusCurrent: 0,
 				effectiveMax: 3,
 				pipTypes: ['standard', 'standard', 'standard'],
 				pipActiveStates: [false, false, false],
@@ -103,6 +106,7 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 
 		const actions = getCombatantBaseActions(combatant);
 		const bonus = getCombatantBonusActions(combatant);
+		const bonusCurrent = getCombatantBonusCurrent(combatant);
 		const max = actions.max || 3;
 		const pipTypes = getCombatantPipTypes(combatant);
 		const pipActiveStates = getCombatantPipActiveStates(combatant);
@@ -110,6 +114,7 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 			current: actions.current,
 			max,
 			bonus,
+			bonusCurrent,
 			effectiveMax: max + bonus,
 			pipTypes,
 			pipActiveStates,
@@ -155,7 +160,8 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 		if (actionsData.bonus >= maxBonusSlots) return;
 
 		const newBonus = actionsData.bonus + 1;
-		const newCurrent = actionsData.current + 1;
+		const newBonusCurrent = actionsData.bonusCurrent + 1;
+		const newCurrent = actionsData.pipActiveStates.filter(Boolean).length + newBonusCurrent;
 
 		await queueCombatantMutationWithFreshDocument({
 			combat,
@@ -163,6 +169,7 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 			mutation: async (currentCombatant) => {
 				await currentCombatant.update({
 					'system.actions.base.bonus': newBonus,
+					'system.actions.base.bonusCurrent': newBonusCurrent,
 					'system.actions.base.current': newCurrent,
 				} as Record<string, unknown>);
 			},
@@ -237,18 +244,23 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 
 		const isBonus = index >= actionsData.max;
 
-		// Bonus pips (index >= max) use simple current increment/decrement
+		// Bonus pips (index >= max) use their own bonusCurrent counter
 		if (isBonus) {
-			const isAvailable = index < actionsData.current;
+			const bonusIndex = index - actionsData.max;
+			const isAvailable = bonusIndex < actionsData.bonusCurrent;
 			if (isAvailable) {
-				const newCurrent = Math.max(actionsData.current - 1, 0);
+				const newBonusCurrent = Math.max(0, actionsData.bonusCurrent - 1);
 				void updatePipState({
-					'system.actions.base.current': newCurrent,
+					'system.actions.base.bonusCurrent': newBonusCurrent,
+					'system.actions.base.current':
+						actionsData.pipActiveStates.filter(Boolean).length + newBonusCurrent,
 				} as Record<string, unknown>);
 			} else {
-				const newCurrent = Math.min(actionsData.current + 1, actionsData.effectiveMax);
+				const newBonusCurrent = Math.min(actionsData.bonusCurrent + 1, actionsData.bonus);
 				void updatePipState({
-					'system.actions.base.current': newCurrent,
+					'system.actions.base.bonusCurrent': newBonusCurrent,
+					'system.actions.base.current':
+						actionsData.pipActiveStates.filter(Boolean).length + newBonusCurrent,
 				} as Record<string, unknown>);
 			}
 			return;
@@ -258,14 +270,21 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 		// recomputing from scratch. This avoids desync with bonus pips.
 		const isActive = actionsData.pipActiveStates[index] ?? false;
 
+		// Helper: compute current from base pip states + bonusCurrent
+		function syncCurrent(newBaseStates: boolean[]): number {
+			return newBaseStates.filter(Boolean).length + actionsData.bonusCurrent;
+		}
+
 		// Ctrl+click: set pip to bane and activate it
 		if (event?.ctrlKey || event?.metaKey) {
 			const currentType = actionsData.pipTypes[index];
 			const newType: ActionType = currentType === 'bane' && isActive ? 'standard' : 'bane';
+			const newStates = [...actionsData.pipActiveStates];
+			newStates[index] = true;
 			void updatePipState({
 				[`system.actions.base.pipType${index}`]: newType,
 				[`system.actions.base.pipActive${index}`]: true,
-				'system.actions.base.current': Math.max(0, actionsData.current + (isActive ? 0 : 1)),
+				'system.actions.base.current': syncCurrent(newStates),
 			} as Record<string, unknown>);
 			return;
 		}
@@ -274,20 +293,23 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 		if (event?.shiftKey) {
 			const currentType = actionsData.pipTypes[index];
 			const newType: ActionType = currentType === 'inspired' && isActive ? 'standard' : 'inspired';
+			const newStates = [...actionsData.pipActiveStates];
+			newStates[index] = true;
 			void updatePipState({
 				[`system.actions.base.pipType${index}`]: newType,
 				[`system.actions.base.pipActive${index}`]: true,
-				'system.actions.base.current': Math.max(0, actionsData.current + (isActive ? 0 : 1)),
+				'system.actions.base.current': syncCurrent(newStates),
 			} as Record<string, unknown>);
 			return;
 		}
 
-		// Normal click: toggle active state — apply +1 or -1 delta to current
-		const newCurrent = Math.max(0, actionsData.current + (isActive ? -1 : 1));
+		// Normal click: toggle active state
+		const newStates = [...actionsData.pipActiveStates];
+		newStates[index] = !isActive;
 
 		const updates: Record<string, unknown> = {
 			[`system.actions.base.pipActive${index}`]: !isActive,
-			'system.actions.base.current': newCurrent,
+			'system.actions.base.current': syncCurrent(newStates),
 		};
 
 		// Restoring (clicking empty pip) always sets type to standard

@@ -38,7 +38,7 @@
 					{#each { length: state.actionsData.effectiveMax }, i}
 						{@const isBonus = i >= state.actionsData.max}
 						{@const isActive = isBonus
-							? i < state.actionsData.current
+							? i - state.actionsData.max < state.actionsData.bonusCurrent
 							: (state.actionsData.pipActiveStates[i] ?? false)}
 						{@const isJustSpent = state.justSpentPips.has(i)}
 						{@const diceIcon = getDiceIcon(i)}

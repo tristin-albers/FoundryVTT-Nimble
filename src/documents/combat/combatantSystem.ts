@@ -59,6 +59,13 @@ export function getCombatantPipTypes(combatant: Combatant.Implementation): Actio
 	];
 }
 
+export function getCombatantBonusCurrent(combatant: Combatant.Implementation): number {
+	const base = getCombatantSystem(combatant)?.actions?.base as
+		| { bonusCurrent?: unknown }
+		| undefined;
+	return normalizeNonNegativeInteger(base?.bonusCurrent);
+}
+
 export function getCombatantPipActiveStates(combatant: Combatant.Implementation): boolean[] {
 	const base = getCombatantSystem(combatant)?.actions?.base as
 		| { pipActive0?: unknown; pipActive1?: unknown; pipActive2?: unknown }
