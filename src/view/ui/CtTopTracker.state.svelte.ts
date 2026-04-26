@@ -16,10 +16,7 @@ import { isCombatStarted } from '#utils/isCombatStarted.js';
 import { queueCombatantMutationWithFreshDocument } from '#utils/queueCombatantMutationWithFreshDocument.js';
 import CtSettingsDialogComponent from '#view/dialogs/CtSettingsDialog.svelte';
 import {
-	getCombatantZipperSide,
-	getZipperCurrentSide,
 	hasZipperActed,
-	isZipperAwaitingSelection,
 	isZipperInitiativeActive,
 } from '../../documents/combat/zipperTurnState.js';
 import { COMBAT_TRACKER_CLIENT_SETTING_UPDATED_EVENT_NAME } from '../../settings/combatTrackerSettings.js';
