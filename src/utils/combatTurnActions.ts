@@ -349,7 +349,6 @@ export async function requestZipperCombatantSelection(params: {
 	}
 
 	if (!game.user?.id) return false;
-	if (!getPrimaryActiveGmId()) return false;
 
 	const socket = game.socket as
 		| {

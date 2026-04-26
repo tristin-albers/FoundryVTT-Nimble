@@ -117,9 +117,9 @@ function removeOverlay(token: TokenWithZipperOverlay): void {
 		token[ZIPPER_OVERLAY_KEY] = null;
 	}
 
-	const clickHandler = token[ZIPPER_OVERLAY_CLICK_KEY];
-	if (clickHandler) {
-		token.removeEventListener?.('pointerdown', clickHandler);
+	const cleanupClick = token[ZIPPER_OVERLAY_CLICK_KEY];
+	if (cleanupClick) {
+		cleanupClick();
 		token[ZIPPER_OVERLAY_CLICK_KEY] = null;
 	}
 }
@@ -129,7 +129,8 @@ function createOverlay(token: TokenWithZipperOverlay, combatantId: string): void
 
 	const tokenSize = Math.max(1, Number(token.w ?? 1));
 	const container = new PIXI.Container();
-	container.eventMode = 'none';
+	container.eventMode = 'static';
+	container.cursor = 'pointer';
 	container.zIndex = 1020;
 
 	// Green circle background
@@ -160,20 +161,27 @@ function createOverlay(token: TokenWithZipperOverlay, combatantId: string): void
 	container.addChild(background);
 	container.addChild(label);
 
+	// Expand hit area to make clicking easier
+	container.hitArea = new PIXI.Circle(0, 0, circleRadius + 4);
+
 	// Position at bottom-center of token
 	container.position.set(Math.round(tokenSize / 2), Math.round(tokenSize - circleRadius - 4));
 
 	token.addChild(container);
 	token[ZIPPER_OVERLAY_KEY] = container;
 
-	// Click handler — make the whole token clickable for selection
+	// Click handler — clicking the overlay selects this combatant for the turn.
+	// Attach to the overlay container so it works regardless of token interaction state.
 	const combat = getCombatForScene(canvas.scene?.id ?? '');
 	if (combat) {
-		const clickHandler = () => {
+		const clickHandler = (event: PIXI.FederatedPointerEvent) => {
+			event.stopPropagation();
 			void requestZipperCombatantSelection({ combat, combatantId });
 		};
-		token.addEventListener?.('pointerdown', clickHandler);
-		token[ZIPPER_OVERLAY_CLICK_KEY] = clickHandler;
+		container.on('pointerdown', clickHandler);
+		token[ZIPPER_OVERLAY_CLICK_KEY] = () => {
+			container.off('pointerdown', clickHandler);
+		};
 	}
 }
 
