@@ -237,11 +237,156 @@ New strings under `NIMBLE.combat.zipper`:
 
 ---
 
-## Implementation Order
+## Implementation Order (Phases 1-6: COMPLETE)
 
-1. Phase 1 (data foundation) — must come first, everything depends on it
-2. Phase 2 (combat lifecycle) — core logic
-3. Phase 5 (socket communication) — needed for Phase 3 player interaction
-4. Phase 3 (token overlays) — selection UX
-5. Phase 4 (tracker cards) — visual polish
-6. Phase 6 (localization) — can be done incrementally alongside each phase
+1. Phase 1 (data foundation) — DONE
+2. Phase 2 (combat lifecycle) — DONE
+3. Phase 5 (socket communication) — DONE
+4. Phase 3 (token overlays) — DONE
+5. Phase 4 (tracker cards) — DONE
+6. Phase 6 (localization) — DONE
+
+---
+
+# UX Improvement Phases
+
+## Phase 7: Click Tracker Cards to Select Combatant
+
+**Files**: `src/view/ui/CtTopTracker.state.svelte.ts`, `src/view/ui/CtTopTracker.svelte`
+
+During `awaitingSelection`, clicking an un-acted combatant card or monster-stack card in the tracker should select that combatant for the turn — same as clicking the token overlay.
+
+- Modify `handleCombatantCardClick`: when zipper mode + awaiting selection + combatant is un-acted + on the current side → call `requestZipperCombatantSelection` instead of panning
+- Modify `handleMonsterStackClick`: same logic for monster stacks, select the group leader
+- Add visual cursor change on eligible cards during selection (pointer cursor)
+- Players can only click their own character cards; GM can click any card on the current side
+- Cards that are already acted or on the wrong side: keep existing click behavior (pan to token)
+
+## Phase 8: Pulsing Glow on Eligible Tokens
+
+**File**: `src/hooks/zipperTokenOverlay.ts`
+
+Add a pulsing border/glow effect around the full token during selection mode, not just the small green check circle.
+
+- When `awaitingSelection` is true: draw a soft green pulsing ring around eligible tokens using `PIXI.Graphics` with animated alpha
+- Use `PIXI.Ticker` to animate the pulse (alpha oscillates 0.3 → 0.7 over ~1.5s)
+- Ring should be wider than the token border so it's visible behind the token frame
+- Remove pulse when selection is made or combat state changes
+- Green check overlay stays on top of the pulsing ring
+
+## Phase 9: Player Notification on Side Change
+
+**Files**: `src/documents/combat/combat.svelte.ts`, `src/hooks/zipperTokenOverlay.ts`
+
+Show a clear UI notification when the side flips to players so they know it's time to choose.
+
+- When `awaitingSelection` becomes true and `currentSide` is `'player'`:
+  - Show a Foundry `ui.notifications.info()` toast: "Your turn — select a hero to act"
+  - Only show on non-GM clients (players)
+- When `currentSide` is `'gm'` and user is GM:
+  - Show toast: "Select an enemy to act"
+- Hook into `updateCombat` in the token overlay to detect side changes
+- Debounce to avoid duplicate notifications on rapid updates
+
+## Phase 10: Acted State on Canvas Tokens
+
+**File**: `src/hooks/minionGroupTokenBadges.ts` or `src/hooks/zipperTokenOverlay.ts`
+
+Show checkmark badges on canvas tokens that have already acted this round, using the existing turn-complete badge pattern.
+
+- Integrate with `minionGroupTokenBadges.ts` — its `buildTurnCompleteBadgeTokenIdsForCurrentScene` already tracks which tokens have ended their turn
+- When zipper is active, override the badge logic: token shows the checkmark if `hasZipperActed(combatant)` is true, regardless of turn position
+- Reuse existing badge styling (blue checkmark in top-right corner)
+- Badge persists until round resets
+
+## Phase 11: Side Indicator in Tracker Header
+
+**File**: `src/view/ui/CtTopTracker.svelte`
+
+Show a prominent "Player Turn" / "GM Turn" indicator near the round counter in the tracker controls area.
+
+- Add a side indicator element next to or below the round counter
+- During `awaitingSelection`: show "Player Turn" (green) or "GM Turn" (red/orange)
+- During an active turn (not awaiting): show "Acting: {combatant name}"
+- Style to match existing tracker controls aesthetic
+- Animate the transition between states with a subtle fade
+
+## Phase 12: Hide End Turn During Selection Mode
+
+**Files**: `src/view/ui/CtTopTracker.svelte`, `src/view/ui/CtTopTracker.state.svelte.ts`
+
+The "End Turn" button overlay should not appear when `awaitingSelection` is true since no one is actively taking a turn.
+
+- Modify `showEndTurnOverlay` derived value: add `&& !zipperAwaitingSelection` condition
+- When awaiting selection, the active card highlight should also be suppressed (no card is "active")
+- Ensure End Turn reappears immediately once a combatant is selected
+
+## Phase 13: Round Start Chat Announcement
+
+**File**: `src/documents/combat/combat.svelte.ts`
+
+When combat starts or a new round begins, post a chat message announcing which side goes first.
+
+- In `startCombat()` after zipper initialization: create a chat message
+  - "Combat Round 1 — {Players/GM} go first"
+  - Use `ChatMessage.implementation.create()` with a styled template
+- In `nextRound()` after zipper reset:
+  - "Round {N} — {Players/GM} go first"
+- Style the message distinctly (could reuse the initiative roll flavor format)
+- Only the GM creates the message (prevent duplicates)
+
+## Phase 14: Card Movement Animation
+
+**File**: `src/view/ui/CtTopTracker.svelte`, `src/view/ui/CtTopTracker.state.svelte.ts`
+
+When a combatant finishes their turn and their card moves from the un-acted section to the acted section, animate the transition.
+
+- Use Svelte's `animate:flip` directive on the `{#each}` block for smooth position changes
+- When a combatant is marked as acted:
+  - Card slides from its current position to the acted section (leftmost)
+  - Other cards shift to fill the gap
+- `flip` animation duration: ~300ms with easing
+- Ensure the zipper separator also repositions smoothly
+- Must work with the existing virtualized entry system (may need to temporarily disable virtualization during animation)
+
+## Phase 15: Overflow Indicator
+
+**File**: `src/view/ui/CtTopTracker.svelte`, `src/view/ui/ctTopTracker/combat.utils.ts`
+
+When one side is exhausted and the other takes consecutive turns, show a visual cue.
+
+- Add `isOverflowPhase` derived state from `zipperTurnState.ts` (already exported)
+- When overflow is active: change the separator label to "Overflow — {side} continues"
+- Optionally change separator line color (orange/amber instead of green)
+- Localize the overflow message
+
+## Phase 16: GM Drag-to-Group During Selection
+
+**Files**: `src/hooks/zipperTokenOverlay.ts`, `src/documents/combat/combat.svelte.ts`
+
+Allow the GM to select multiple enemy tokens during selection mode to form an ad-hoc group that acts together as one GM turn.
+
+- When `awaitingSelection` and `currentSide` is `'gm'`:
+  - GM can shift-click multiple hostile tokens to toggle them into a selection set
+  - Show a visual indicator (highlighted border) on shift-selected tokens
+  - Once the GM confirms (clicks a "Start Group Turn" button or double-clicks), form a temporary group using existing `assignNcsTemporaryGroupFromAttackMembers` pattern
+  - All selected creatures share one GM turn; all are marked acted together
+- Add a small "Group" button on the overlay when shift-selected tokens > 1
+- Clear the multi-selection when the selection mode ends
+
+---
+
+## UX Implementation Order
+
+Recommended order (dependencies noted):
+
+1. **Phase 12** (hide End Turn during selection) — smallest change, immediate polish
+2. **Phase 7** (click tracker cards to select) — high-impact, standalone
+3. **Phase 11** (side indicator in header) — high visibility, standalone
+4. **Phase 9** (player notification) — standalone, improves multiplayer UX
+5. **Phase 10** (acted badges on canvas) — extends existing badge system
+6. **Phase 15** (overflow indicator) — small, extends separator
+7. **Phase 8** (pulsing glow on tokens) — visual polish, standalone
+8. **Phase 13** (round start chat) — standalone, nice-to-have
+9. **Phase 14** (card animation) — complex, may conflict with virtualization
+10. **Phase 16** (GM drag-to-group) — most complex, depends on stable selection flow
