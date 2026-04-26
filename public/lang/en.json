@@ -1663,7 +1663,7 @@
 			"markNotActed": "Mark as Not Acted",
 			"acted": "Acted",
 			"awaiting": "Awaiting",
-			"overflow": "Overflow — {side} continues",
+			"overflow": "Overflow",
 			"roundStart": "Round {round} — {side} goes first",
 			"playersChoose": "Players choose",
 			"gmChooses": "GM chooses",

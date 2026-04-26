@@ -1,5 +1,6 @@
 import {
 	getCombatantZipperSide,
+	getZipperActCounter,
 	getZipperCurrentSide,
 	hasZipperActed,
 	isZipperAwaitingSelection,
@@ -182,9 +183,9 @@ function createOverlay(token: TokenWithZipperOverlay, combatantId: string): void
 
 	// Pulsing glow ring around the entire token
 	const pulseRing = new PIXI.Graphics();
-	const ringPadding = Math.max(3, Math.round(tokenSize * 0.04));
+	const ringPadding = Math.max(6, Math.round(tokenSize * 0.08));
 	const tokenHeight = Math.max(1, Number(token.h ?? tokenSize));
-	pulseRing.lineStyle({ width: 3, color: 0x22c55e, alpha: 0.6 });
+	pulseRing.lineStyle({ width: 4, color: 0x22c55e, alpha: 0.6 });
 	pulseRing.drawRoundedRect(
 		-ringPadding,
 		-ringPadding,
@@ -206,7 +207,7 @@ function createOverlay(token: TokenWithZipperOverlay, combatantId: string): void
 				return;
 			}
 			const time = performance.now() / 1000;
-			pulseRing.alpha = 0.35 + Math.sin(time * 2.5) * 0.3;
+			pulseRing.alpha = 0.4 + Math.sin(time * 2.5) * 0.4;
 		};
 		ticker.add(pulseCallback);
 	}
@@ -265,7 +266,8 @@ function notifySelectionPhaseIfNeeded(): void {
 	}
 
 	const side = getZipperCurrentSide(combat);
-	const notifyKey = `${combat.id}-${combat.round}-${side}`;
+	const actCounter = getZipperActCounter(combat);
+	const notifyKey = `${combat.id}-${combat.round}-${side}-${actCounter}`;
 	if (lastNotifiedAwaitingSide === notifyKey) return;
 	lastNotifiedAwaitingSide = notifyKey;
 

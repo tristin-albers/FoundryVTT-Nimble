@@ -825,7 +825,6 @@ class NimbleCombat extends Combat {
 					actCounter: 0,
 				}) as Parameters<Combat['update']>[0],
 			);
-			await this.#announceZipperRound(1, firstSide);
 		}
 
 		if (preferredStartTurnIdentity) {
@@ -1396,28 +1395,9 @@ class NimbleCombat extends Combat {
 			);
 			this.turns = this.setupTurns();
 			this.#syncTurnIndexWithAliveTurns();
-			await this.#announceZipperRound(this.round ?? 1, roundStartSide);
 		}
 
 		return result;
-	}
-
-	async #announceZipperRound(
-		round: number,
-		firstSide: import('./zipperTurnState.js').ZipperSide,
-	): Promise<void> {
-		if (!game.user?.isGM) return;
-		const sideName = firstSide === 'player' ? 'Players' : 'GM';
-		const content = `<strong>Round ${round}</strong> — ${sideName} go first`;
-		try {
-			await ChatMessage.implementation.create({
-				content,
-				speaker: { alias: 'Combat' },
-				whisper: [],
-			} as ChatMessage.CreateData);
-		} catch {
-			// Silently ignore chat creation failures
-		}
 	}
 
 	#readZipperFlags(): {

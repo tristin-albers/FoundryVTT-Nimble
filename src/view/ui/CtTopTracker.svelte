@@ -1,6 +1,10 @@
 <script lang="ts">
 	import { fade } from 'svelte/transition';
-	import { hasZipperActed } from '../../documents/combat/zipperTurnState.js';
+	import {
+		getCombatantZipperSide,
+		getZipperCurrentSide,
+		hasZipperActed,
+	} from '../../documents/combat/zipperTurnState.js';
 	import { createCtTopTrackerState } from './CtTopTracker.state.svelte.js';
 	import { CT_SHELL_EXTRA_WIDTH_REM } from './ctTopTracker/constants.js';
 	import {
@@ -63,6 +67,7 @@
 	let zipperAwaitingSelection = $derived(trackerViewState.zipperAwaitingSelection);
 	let zipperOverflow = $derived(trackerViewState.zipperOverflow);
 	const handleZipperToggleActed = trackerViewState.handleZipperToggleActed;
+	const handleZipperCardSelect = trackerViewState.handleZipperCardSelect;
 
 	$effect(() => {
 		trackerViewState.trackElement = trackElement;
@@ -476,6 +481,22 @@
 										>
 											<i class={isZipperActed ? 'fa-solid fa-rotate-left' : 'fa-solid fa-check'}
 											></i>
+										</div>
+									{/if}
+									{#if isZipperMode && combatStarted && zipperAwaitingSelection && !isZipperActed && currentCombat && getCombatantZipperSide(entry.combatant) === getZipperCurrentSide(currentCombat) && (game.user?.isGM || entry.combatant.actor?.isOwner)}
+										<!-- svelte-ignore a11y_click_events_have_key_events -->
+										<!-- svelte-ignore a11y_no_static_element_interactions -->
+										<div
+											class="nimble-ct__zipper-select"
+											role="button"
+											tabindex="-1"
+											data-tooltip="Select to act"
+											onclick={(event) => {
+												event.stopPropagation();
+												handleZipperCardSelect(entry.combatant);
+											}}
+										>
+											<i class="fa-solid fa-check"></i>
 										</div>
 									{/if}
 									{#if resourceChips.length > 0}
@@ -2583,6 +2604,29 @@
 	.nimble-ct__zipper-toggle--acted {
 		background: color-mix(in srgb, hsl(142 71% 30%) 80%, transparent);
 		color: hsl(142 71% 80%);
+	}
+	.nimble-ct__zipper-select {
+		position: absolute;
+		bottom: -0.25rem;
+		right: -0.25rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.25rem;
+		height: 1.25rem;
+		border-radius: 50%;
+		background: hsl(142 71% 40%);
+		border: 1.5px solid hsl(0 0% 100% / 0.7);
+		color: white;
+		font-size: 0.6rem;
+		z-index: 12;
+		cursor: pointer;
+		pointer-events: auto;
+		box-shadow: 0 1px 4px color-mix(in srgb, black 40%, transparent);
+		transition: transform 120ms ease;
+	}
+	.nimble-ct__zipper-select:hover {
+		transform: scale(1.15);
 	}
 	.nimble-ct__zipper-side-indicator {
 		position: absolute;
