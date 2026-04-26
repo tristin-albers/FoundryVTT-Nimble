@@ -1514,6 +1514,50 @@ class NimbleCombat extends Combat {
 	}
 
 	/**
+	 * Select multiple combatants to act together as one GM group turn in zipper
+	 * initiative. The first combatant becomes the active turn; the remaining
+	 * combatants are immediately marked as acted so they are consumed together.
+	 *
+	 * When the GM ends the leader's turn via `#zipperNextTurn`, the leader is
+	 * also marked acted normally — so all group members end up in the acted
+	 * section of the tracker.
+	 */
+	async selectZipperGroup(combatantIds: string[]): Promise<void> {
+		if (!isZipperInitiativeActive()) return;
+		if (!game.user?.isGM) return;
+
+		// Deduplicate and validate
+		const uniqueIds = [...new Set(combatantIds)].filter((id) => this.combatants.has(id));
+		if (uniqueIds.length < 2) {
+			// Fall back to single select
+			if (uniqueIds.length === 1) return this.selectZipperCombatant(uniqueIds[0]!);
+			return;
+		}
+
+		const leaderId = uniqueIds[0]!;
+
+		// Mark all non-leader members as acted immediately so they share this turn
+		const followerIds = uniqueIds.slice(1);
+		const allActedUpdates: Record<string, unknown>[] = [];
+		for (const followerId of followerIds) {
+			const updates = buildMarkActedUpdates(this, followerId);
+			allActedUpdates.push(...updates);
+		}
+		if (allActedUpdates.length > 0) {
+			await this.updateEmbeddedDocuments('Combatant', allActedUpdates);
+		}
+
+		// Bump the act counter to account for the followers we just marked
+		const nextCounter = getZipperActCounter(this) + followerIds.length;
+		await this.update(
+			buildZipperCombatFlagUpdate({ actCounter: nextCounter }) as Parameters<Combat['update']>[0],
+		);
+
+		// Now select the leader as the active combatant for this turn
+		await this.selectZipperCombatant(leaderId);
+	}
+
+	/**
 	 * GM-only override to manually mark/unmark a combatant as acted.
 	 * Does not flip side or trigger selection mode — pure bookkeeping correction.
 	 */

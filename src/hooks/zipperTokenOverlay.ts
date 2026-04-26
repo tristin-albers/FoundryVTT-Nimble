@@ -18,15 +18,40 @@ import {
 const ZIPPER_OVERLAY_KEY = '_nimbleZipperSelectionOverlay';
 const ZIPPER_OVERLAY_CLICK_KEY = '_nimbleZipperSelectionClickHandler';
 const ZIPPER_PULSE_KEY = '_nimbleZipperPulseRing';
+const ZIPPER_MULTI_SELECT_KEY = '_nimbleZipperMultiSelected';
 
 type TokenWithZipperOverlay = Token & {
 	[ZIPPER_OVERLAY_KEY]?: PIXI.Container | null;
 	[ZIPPER_OVERLAY_CLICK_KEY]?: (() => void) | null;
 	[ZIPPER_PULSE_KEY]?: PIXI.Graphics | null;
+	[ZIPPER_MULTI_SELECT_KEY]?: boolean;
 };
 
 let didRegisterZipperTokenOverlay = false;
 let lastNotifiedAwaitingSide: string | null = null;
+
+// ---------------------------------------------------------------------------
+// GM multi-select state for ad-hoc group turns
+// ---------------------------------------------------------------------------
+
+/** Set of combatant IDs the GM has shift-selected for a group turn. */
+const multiSelectedCombatantIds = new Set<string>();
+
+function clearMultiSelection(): void {
+	multiSelectedCombatantIds.clear();
+	// Remove visual indicators from all tokens
+	if (!canvas?.tokens) return;
+	for (const token of canvas.tokens.placeables) {
+		const t = token as TokenWithZipperOverlay;
+		if (t[ZIPPER_MULTI_SELECT_KEY]) {
+			t[ZIPPER_MULTI_SELECT_KEY] = false;
+		}
+	}
+}
+
+type CombatWithZipperGroupSelect = Combat & {
+	selectZipperGroup?: (combatantIds: string[]) => Promise<void>;
+};
 
 // ---------------------------------------------------------------------------
 // Combat / scene helpers
@@ -138,24 +163,27 @@ function removeOverlay(token: TokenWithZipperOverlay): void {
 function createOverlay(token: TokenWithZipperOverlay, combatantId: string): void {
 	removeOverlay(token);
 
+	const isMultiSelected = multiSelectedCombatantIds.has(combatantId);
 	const tokenSize = Math.max(1, Number(token.w ?? 1));
 	const container = new PIXI.Container();
 	container.eventMode = 'static';
 	container.cursor = 'pointer';
 	container.zIndex = 1020;
 
-	// Green circle background
+	// Green for normal, cyan for multi-selected
+	const accentColor = isMultiSelected ? 0x06b6d4 : 0x22c55e;
 	const circleRadius = Math.max(14, Math.round(tokenSize * 0.18));
 	const background = new PIXI.Graphics();
-	background.beginFill(0x22c55e, 0.9);
+	background.beginFill(accentColor, 0.9);
 	background.drawCircle(0, 0, circleRadius);
 	background.endFill();
 	background.lineStyle({ width: 2, color: 0xffffff, alpha: 0.9 });
 	background.drawCircle(0, 0, circleRadius);
 
-	// Checkmark text
+	// Checkmark text (or selection count for multi-selected tokens)
+	const labelText = isMultiSelected ? `${multiSelectedCombatantIds.size}` : '\u2713';
 	const fontSize = Math.max(12, Math.round(circleRadius * 1.1));
-	const label = new PIXI.Text('\u2713', {
+	const label = new PIXI.Text(labelText, {
 		fontFamily: 'Signika',
 		fontSize,
 		fontWeight: '700',
@@ -185,7 +213,7 @@ function createOverlay(token: TokenWithZipperOverlay, combatantId: string): void
 	const pulseRing = new PIXI.Graphics();
 	const ringPadding = Math.max(6, Math.round(tokenSize * 0.08));
 	const tokenHeight = Math.max(1, Number(token.h ?? tokenSize));
-	pulseRing.lineStyle({ width: 4, color: 0x22c55e, alpha: 0.6 });
+	pulseRing.lineStyle({ width: isMultiSelected ? 5 : 4, color: accentColor, alpha: 0.6 });
 	pulseRing.drawRoundedRect(
 		-ringPadding,
 		-ringPadding,
@@ -213,11 +241,46 @@ function createOverlay(token: TokenWithZipperOverlay, combatantId: string): void
 	}
 
 	// Click handler — clicking the overlay selects this combatant for the turn.
+	// Shift-click for GM allows multi-selecting combatants for a group turn.
 	// Attach to the overlay container so it works regardless of token interaction state.
 	const combat = getCombatForScene(canvas.scene?.id ?? '');
 	if (combat) {
 		const clickHandler = (event: PIXI.FederatedPointerEvent) => {
 			event.stopPropagation();
+			const isGM = Boolean(game.user?.isGM);
+			const currentSide = getZipperCurrentSide(combat);
+
+			// GM shift-click: toggle multi-selection for group turns
+			if (event.shiftKey && isGM && currentSide === 'gm') {
+				if (multiSelectedCombatantIds.has(combatantId)) {
+					multiSelectedCombatantIds.delete(combatantId);
+					token[ZIPPER_MULTI_SELECT_KEY] = false;
+				} else {
+					multiSelectedCombatantIds.add(combatantId);
+					token[ZIPPER_MULTI_SELECT_KEY] = true;
+				}
+				// Refresh all overlays to update visual indicators
+				refreshAllTokenOverlays();
+				return;
+			}
+
+			// GM normal click with multi-selection active: activate the group
+			if (isGM && multiSelectedCombatantIds.size > 0) {
+				// Include the clicked combatant in the group
+				multiSelectedCombatantIds.add(combatantId);
+				if (multiSelectedCombatantIds.size >= 2) {
+					const ids = [...multiSelectedCombatantIds];
+					clearMultiSelection();
+					const combatWithGroup = combat as CombatWithZipperGroupSelect;
+					if (typeof combatWithGroup.selectZipperGroup === 'function') {
+						void combatWithGroup.selectZipperGroup(ids);
+					}
+					return;
+				}
+				// Only 1 in the set (the one just clicked) — fall through to single select
+				clearMultiSelection();
+			}
+
 			void requestZipperCombatantSelection({ combat, combatantId });
 		};
 		container.on('pointerdown', clickHandler);
@@ -317,6 +380,7 @@ export default function registerZipperTokenOverlay(): void {
 	});
 
 	Hooks.on('canvasTearDown', () => {
+		clearMultiSelection();
 		clearAllTokenOverlays();
 	});
 
@@ -325,11 +389,18 @@ export default function registerZipperTokenOverlay(): void {
 		refreshTokenOverlay(token as TokenWithZipperOverlay, eligibleMap);
 	});
 
-	Hooks.on('updateCombat', () => {
+	Hooks.on('updateCombat', (_combat: Combat, change: Record<string, unknown>) => {
+		// Clear multi-selection when side changes or selection mode ends
+		const flags = change?.flags as Record<string, Record<string, unknown>> | undefined;
+		const nimbleFlags = flags?.nimble as Record<string, unknown> | undefined;
+		if (nimbleFlags && ('currentSide' in nimbleFlags || 'awaitingSelection' in nimbleFlags)) {
+			clearMultiSelection();
+		}
 		refreshAllTokenOverlays();
 	});
 
 	Hooks.on('deleteCombat', () => {
+		clearMultiSelection();
 		clearAllTokenOverlays();
 	});
 
