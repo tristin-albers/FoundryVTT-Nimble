@@ -61,6 +61,7 @@
 	let isZipperMode = $derived(trackerViewState.isZipperMode);
 	let zipperCurrentSide = $derived(trackerViewState.zipperCurrentSide);
 	let zipperAwaitingSelection = $derived(trackerViewState.zipperAwaitingSelection);
+	let zipperOverflow = $derived(trackerViewState.zipperOverflow);
 	const handleZipperToggleActed = trackerViewState.handleZipperToggleActed;
 
 	$effect(() => {
@@ -247,6 +248,30 @@
 			</div>
 		{/if}
 		<div class="nimble-ct">
+			{#if isZipperMode && combatStarted}
+				<div
+					class="nimble-ct__zipper-side-indicator"
+					class:nimble-ct__zipper-side-indicator--player={zipperCurrentSide === 'player'}
+					class:nimble-ct__zipper-side-indicator--gm={zipperCurrentSide === 'gm'}
+					class:nimble-ct__zipper-side-indicator--awaiting={zipperAwaitingSelection}
+				>
+					{#if zipperAwaitingSelection}
+						<i class="fa-solid fa-hourglass-half"></i>
+						{zipperCurrentSide === 'player'
+							? localizeWithFallback(
+									'NIMBLE.zipperInitiative.selectHero',
+									'Players: choose a hero to act',
+								)
+							: localizeWithFallback(
+									'NIMBLE.zipperInitiative.selectEnemy',
+									'GM: choose an enemy to act',
+								)}
+					{:else}
+						<i class="fa-solid fa-dice-d20"></i>
+						{localizeWithFallback('NIMBLE.zipperInitiative.acting', 'Turn in progress')}
+					{/if}
+				</div>
+			{/if}
 			{#if game.user?.isGM}
 				<div class="nimble-ct__controls faded-ui" aria-label="Combat controls left">
 					{#if hasMonsterCombatants && canCurrentUserToggleMonsterCards}
@@ -337,16 +362,23 @@
 							</li>
 						{/if}
 						{#if entry.kind === 'zipper-separator'}
-							<li class="nimble-ct__zipper-separator">
+							<li
+								class="nimble-ct__zipper-separator"
+								class:nimble-ct__zipper-separator--overflow={zipperOverflow}
+							>
 								<span class="nimble-ct__zipper-separator-line"></span>
 								{#if zipperAwaitingSelection}
 									<span class="nimble-ct__zipper-separator-label">
-										{zipperCurrentSide === 'player'
-											? localizeWithFallback(
-													'NIMBLE.zipperInitiative.playersChoose',
-													'Players choose',
-												)
-											: localizeWithFallback('NIMBLE.zipperInitiative.gmChooses', 'GM chooses')}
+										{#if zipperOverflow}
+											{localizeWithFallback('NIMBLE.zipperInitiative.overflow', 'Overflow')}
+										{:else if zipperCurrentSide === 'player'}
+											{localizeWithFallback(
+												'NIMBLE.zipperInitiative.playersChoose',
+												'Players choose',
+											)}
+										{:else}
+											{localizeWithFallback('NIMBLE.zipperInitiative.gmChooses', 'GM chooses')}
+										{/if}
 									</span>
 								{/if}
 							</li>
@@ -372,7 +404,10 @@
 							{@const cardName = getCombatantDisplayName(entry.combatant)}
 							{@const canShowActions = shouldRenderCombatantActions()}
 							{@const showEndTurnOverlay =
-								combatStarted && activeEntryKey === entry.key && canCurrentUserEndTurn}
+								combatStarted &&
+								activeEntryKey === entry.key &&
+								canCurrentUserEndTurn &&
+								!zipperAwaitingSelection}
 							<!-- svelte-ignore a11y_click_events_have_key_events -->
 							<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 							{@const isZipperActed = isZipperMode && hasZipperActed(entry.combatant)}
@@ -2488,6 +2523,12 @@
 		text-orientation: mixed;
 		transform: rotate(180deg);
 	}
+	.nimble-ct__zipper-separator--overflow .nimble-ct__zipper-separator-line {
+		border-left-color: color-mix(in srgb, hsl(38 92% 50%) 70%, transparent);
+	}
+	.nimble-ct__zipper-separator--overflow .nimble-ct__zipper-separator-label {
+		color: hsl(38 92% 65%);
+	}
 	.nimble-ct__portrait--zipper-acted {
 		opacity: 0.55;
 		filter: saturate(0.5);
@@ -2542,6 +2583,39 @@
 	.nimble-ct__zipper-toggle--acted {
 		background: color-mix(in srgb, hsl(142 71% 30%) 80%, transparent);
 		color: hsl(142 71% 80%);
+	}
+	.nimble-ct__zipper-side-indicator {
+		position: absolute;
+		top: -1.5rem;
+		left: 50%;
+		transform: translateX(-50%);
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
+		padding: 0.18rem 0.65rem;
+		border-radius: 0.25rem;
+		font-size: 0.7rem;
+		font-weight: 600;
+		white-space: nowrap;
+		pointer-events: none;
+		z-index: 20;
+		background: color-mix(in srgb, hsl(220 15% 15%) 92%, transparent);
+		border: 1px solid color-mix(in srgb, hsl(0 0% 100%) 15%, transparent);
+		color: hsl(0 0% 75%);
+		transition:
+			background 200ms ease,
+			color 200ms ease,
+			border-color 200ms ease;
+	}
+	.nimble-ct__zipper-side-indicator--awaiting.nimble-ct__zipper-side-indicator--player {
+		background: color-mix(in srgb, hsl(142 60% 25%) 85%, transparent);
+		border-color: color-mix(in srgb, hsl(142 71% 45%) 50%, transparent);
+		color: hsl(142 71% 80%);
+	}
+	.nimble-ct__zipper-side-indicator--awaiting.nimble-ct__zipper-side-indicator--gm {
+		background: color-mix(in srgb, hsl(0 60% 25%) 85%, transparent);
+		border-color: color-mix(in srgb, hsl(0 71% 45%) 50%, transparent);
+		color: hsl(0 71% 80%);
 	}
 	@media (max-width: 900px) {
 		.nimble-ct__icon-button {

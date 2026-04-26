@@ -1666,7 +1666,12 @@
 			"overflow": "Overflow — {side} continues",
 			"roundStart": "Round {round} — {side} goes first",
 			"playersChoose": "Players choose",
-			"gmChooses": "GM chooses"
+			"gmChooses": "GM chooses",
+			"acting": "Turn in progress",
+			"playerTurn": "Player Turn",
+			"gmTurn": "GM Turn",
+			"yourTurn": "Your turn — select a hero to act",
+			"gmSelectEnemy": "Select an enemy to act"
 		},
 		"nimbleCombatSystemWindow": {
 			"title": "Combat System",

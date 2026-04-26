@@ -2,6 +2,7 @@ import {
 	getZipperCurrentSide,
 	isZipperAwaitingSelection,
 	isZipperInitiativeActive,
+	isOverflowPhase as isZipperOverflow,
 	type ZipperSide,
 } from '../../../documents/combat/zipperTurnState.js';
 import {
@@ -218,6 +219,12 @@ export class CtTopTrackerStore {
 		trackDependency(this.renderVersion);
 		if (!this.currentCombat) return false;
 		return isZipperAwaitingSelection(this.currentCombat);
+	});
+
+	zipperOverflow = $derived.by(() => {
+		trackDependency(this.renderVersion);
+		if (!this.currentCombat) return false;
+		return isZipperOverflow(this.currentCombat);
 	});
 
 	ctTrackMaxWidth = $derived.by(() => {

@@ -7,6 +7,7 @@ import {
 	getCombatantCurrentActions,
 	getCombatantMaxActions,
 	requestAdvanceCombatTurn,
+	requestZipperCombatantSelection,
 	resolveCombatantCurrentActionsAfterDelta,
 } from '#utils/combatTurnActions.js';
 import type { HeroicReactionKey } from '#utils/heroicActions.js';
@@ -15,7 +16,10 @@ import { isCombatStarted } from '#utils/isCombatStarted.js';
 import { queueCombatantMutationWithFreshDocument } from '#utils/queueCombatantMutationWithFreshDocument.js';
 import CtSettingsDialogComponent from '#view/dialogs/CtSettingsDialog.svelte';
 import {
+	getCombatantZipperSide,
+	getZipperCurrentSide,
 	hasZipperActed,
+	isZipperAwaitingSelection,
 	isZipperInitiativeActive,
 } from '../../documents/combat/zipperTurnState.js';
 import { COMBAT_TRACKER_CLIENT_SETTING_UPDATED_EVENT_NAME } from '../../settings/combatTrackerSettings.js';
@@ -445,6 +449,28 @@ export function createCtTopTrackerState() {
 	function handleCombatantCardClick(event: MouseEvent, combatant: Combatant.Implementation): void {
 		event.preventDefault();
 		event.stopPropagation();
+
+		// In zipper mode during selection, clicking an eligible card selects that combatant
+		const combat = trackerStore.currentCombat;
+		if (
+			combat &&
+			isZipperInitiativeActive() &&
+			isCombatStarted(combat) &&
+			isZipperAwaitingSelection(combat) &&
+			!hasZipperActed(combatant) &&
+			!isCombatantDead(combatant) &&
+			getCombatantZipperSide(combatant) === getZipperCurrentSide(combat)
+		) {
+			const combatantId = getCombatantId(combatant);
+			if (combatantId) {
+				// Players can only select their own; GM can select any on the current side
+				if (game.user?.isGM || combatant.actor?.isOwner) {
+					void requestZipperCombatantSelection({ combat, combatantId });
+					return;
+				}
+			}
+		}
+
 		void panCanvasToCombatant(combatant);
 	}
 
@@ -546,6 +572,32 @@ export function createCtTopTrackerState() {
 	function handleMonsterStackClick(event: MouseEvent, entry: MonsterStackTrackEntry): void {
 		event.preventDefault();
 		event.stopPropagation();
+
+		// In zipper mode during selection, clicking an eligible monster stack selects the leader
+		const combat = trackerStore.currentCombat;
+		if (
+			combat &&
+			game.user?.isGM &&
+			isZipperInitiativeActive() &&
+			isCombatStarted(combat) &&
+			isZipperAwaitingSelection(combat) &&
+			entry.combatants.length > 0
+		) {
+			const leader = entry.combatants[0];
+			if (
+				leader &&
+				!hasZipperActed(leader) &&
+				!isCombatantDead(leader) &&
+				getCombatantZipperSide(leader) === getZipperCurrentSide(combat)
+			) {
+				const combatantId = getCombatantId(leader);
+				if (combatantId) {
+					void requestZipperCombatantSelection({ combat, combatantId });
+					return;
+				}
+			}
+		}
+
 		const combatantToPan = resolveMonsterStackCombatant(entry);
 		if (!combatantToPan) return;
 		void panCanvasToCombatant(combatantToPan);
@@ -1281,6 +1333,7 @@ export function createCtTopTrackerState() {
 	const isZipperMode = $derived(trackerStore.isZipperMode);
 	const zipperCurrentSide = $derived(trackerStore.zipperCurrentSide);
 	const zipperAwaitingSelection = $derived(trackerStore.zipperAwaitingSelection);
+	const zipperOverflow = $derived(trackerStore.zipperOverflow);
 	const ctTrackMaxWidth = $derived(trackerStore.ctTrackMaxWidth);
 	const ctWidthPreviewVisible = $derived(trackerStore.ctWidthPreviewVisible);
 	const ctWidthPreviewMaxWidth = $derived(trackerStore.ctWidthPreviewMaxWidth);
@@ -1593,6 +1646,9 @@ export function createCtTopTrackerState() {
 		},
 		get zipperAwaitingSelection() {
 			return zipperAwaitingSelection;
+		},
+		get zipperOverflow() {
+			return zipperOverflow;
 		},
 		handleZipperToggleActed,
 	};

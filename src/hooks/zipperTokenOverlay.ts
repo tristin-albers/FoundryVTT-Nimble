@@ -16,13 +16,16 @@ import {
 
 const ZIPPER_OVERLAY_KEY = '_nimbleZipperSelectionOverlay';
 const ZIPPER_OVERLAY_CLICK_KEY = '_nimbleZipperSelectionClickHandler';
+const ZIPPER_PULSE_KEY = '_nimbleZipperPulseRing';
 
 type TokenWithZipperOverlay = Token & {
 	[ZIPPER_OVERLAY_KEY]?: PIXI.Container | null;
 	[ZIPPER_OVERLAY_CLICK_KEY]?: (() => void) | null;
+	[ZIPPER_PULSE_KEY]?: PIXI.Graphics | null;
 };
 
 let didRegisterZipperTokenOverlay = false;
+let lastNotifiedAwaitingSide: string | null = null;
 
 // ---------------------------------------------------------------------------
 // Combat / scene helpers
@@ -122,6 +125,13 @@ function removeOverlay(token: TokenWithZipperOverlay): void {
 		cleanupClick();
 		token[ZIPPER_OVERLAY_CLICK_KEY] = null;
 	}
+
+	const pulseRing = token[ZIPPER_PULSE_KEY];
+	if (pulseRing) {
+		pulseRing.parent?.removeChild(pulseRing);
+		pulseRing.destroy();
+		token[ZIPPER_PULSE_KEY] = null;
+	}
 }
 
 function createOverlay(token: TokenWithZipperOverlay, combatantId: string): void {
@@ -170,6 +180,37 @@ function createOverlay(token: TokenWithZipperOverlay, combatantId: string): void
 	token.addChild(container);
 	token[ZIPPER_OVERLAY_KEY] = container;
 
+	// Pulsing glow ring around the entire token
+	const pulseRing = new PIXI.Graphics();
+	const ringPadding = Math.max(3, Math.round(tokenSize * 0.04));
+	const tokenHeight = Math.max(1, Number(token.h ?? tokenSize));
+	pulseRing.lineStyle({ width: 3, color: 0x22c55e, alpha: 0.6 });
+	pulseRing.drawRoundedRect(
+		-ringPadding,
+		-ringPadding,
+		tokenSize + ringPadding * 2,
+		tokenHeight + ringPadding * 2,
+		Math.max(4, Math.round(tokenSize * 0.06)),
+	);
+	pulseRing.eventMode = 'none';
+	pulseRing.zIndex = 1019;
+	token.addChild(pulseRing);
+	token[ZIPPER_PULSE_KEY] = pulseRing;
+
+	// Animate the pulse via the shared PIXI ticker
+	const ticker = canvas?.app?.ticker as PIXI.Ticker | undefined;
+	if (ticker) {
+		const pulseCallback = () => {
+			if (!pulseRing.parent) {
+				ticker.remove(pulseCallback);
+				return;
+			}
+			const time = performance.now() / 1000;
+			pulseRing.alpha = 0.35 + Math.sin(time * 2.5) * 0.3;
+		};
+		ticker.add(pulseCallback);
+	}
+
 	// Click handler — clicking the overlay selects this combatant for the turn.
 	// Attach to the overlay container so it works regardless of token interaction state.
 	const combat = getCombatForScene(canvas.scene?.id ?? '');
@@ -204,6 +245,46 @@ function refreshTokenOverlay(
 	createOverlay(token, combatantId);
 }
 
+function notifySelectionPhaseIfNeeded(): void {
+	if (!isZipperInitiativeActive()) {
+		lastNotifiedAwaitingSide = null;
+		return;
+	}
+
+	const sceneId = canvas.scene?.id;
+	if (!sceneId) return;
+	const combat = getCombatForScene(sceneId);
+	if (!combat || !isCombatStarted(combat)) {
+		lastNotifiedAwaitingSide = null;
+		return;
+	}
+
+	if (!isZipperAwaitingSelection(combat)) {
+		lastNotifiedAwaitingSide = null;
+		return;
+	}
+
+	const side = getZipperCurrentSide(combat);
+	const notifyKey = `${combat.id}-${combat.round}-${side}`;
+	if (lastNotifiedAwaitingSide === notifyKey) return;
+	lastNotifiedAwaitingSide = notifyKey;
+
+	const notifications = ui?.notifications as { info?: (message: string) => void } | undefined;
+	if (!notifications?.info) return;
+
+	const isGM = Boolean(game.user?.isGM);
+	if (side === 'player' && !isGM) {
+		notifications.info(
+			game.i18n?.localize?.('NIMBLE.zipperInitiative.yourTurn') ??
+				'Your turn — select a hero to act',
+		);
+	} else if (side === 'gm' && isGM) {
+		notifications.info(
+			game.i18n?.localize?.('NIMBLE.zipperInitiative.gmSelectEnemy') ?? 'Select an enemy to act',
+		);
+	}
+}
+
 function refreshAllTokenOverlays(): void {
 	if (!canvas?.ready || !canvas?.tokens) return;
 
@@ -211,6 +292,7 @@ function refreshAllTokenOverlays(): void {
 	for (const token of canvas.tokens.placeables) {
 		refreshTokenOverlay(token as TokenWithZipperOverlay, eligibleMap);
 	}
+	notifySelectionPhaseIfNeeded();
 }
 
 function clearAllTokenOverlays(): void {

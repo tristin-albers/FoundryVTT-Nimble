@@ -1,4 +1,5 @@
-﻿import { hasCombatantTurnEndedThisRound } from '../utils/combatTurnProgress.js';
+﻿import { hasZipperActed, isZipperInitiativeActive } from '../documents/combat/zipperTurnState.js';
+import { hasCombatantTurnEndedThisRound } from '../utils/combatTurnProgress.js';
 import { getMinionGroupSummaries } from '../utils/minionGrouping.js';
 
 const TOKEN_TURN_COMPLETE_BADGE_KEY = '_nimbleTurnCompleteBadge';
@@ -39,7 +40,8 @@ function getCombatForScene(sceneId: string): Combat | null {
 function buildTurnCompleteBadgeTokenIdsForCurrentScene(): Set<string> {
 	const tokenIds = new Set<string>();
 
-	if (!game.user?.isGM) return tokenIds;
+	// In zipper mode, all users can see acted badges; otherwise GM-only
+	if (!game.user?.isGM && !isZipperInitiativeActive()) return tokenIds;
 
 	const sceneId = canvas.scene?.id;
 	if (!sceneId) return tokenIds;
@@ -52,9 +54,19 @@ function buildTurnCompleteBadgeTokenIdsForCurrentScene(): Set<string> {
 	);
 	const groupSummaries = getMinionGroupSummaries(combatantsForScene);
 
+	const useZipperActed = isZipperInitiativeActive();
+
 	for (const combatant of combatantsForScene) {
 		if (!combatant.tokenId) continue;
 		if (combatant.defeated) continue;
+
+		// In zipper mode, use the acted flag directly instead of position-based turn tracking
+		if (useZipperActed) {
+			if (hasZipperActed(combatant)) {
+				tokenIds.add(combatant.tokenId);
+			}
+			continue;
+		}
 
 		const turnEnded = hasCombatantTurnEndedThisRound(combat, combatant, groupSummaries);
 		if (combatant.type === 'character') {
