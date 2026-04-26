@@ -14,6 +14,7 @@ import renderCompendium from './hooks/renderCompendium.js';
 import renderNimbleTokenHUD from './hooks/renderNimbleTokenHUD.js';
 import registerRuleEventDispatch from './hooks/ruleEventDispatch.js';
 import setup from './hooks/setup.js';
+import registerZipperTokenOverlay from './hooks/zipperTokenOverlay.js';
 import './scss/main.scss';
 import { getCombatManaGrantForCombat, getCombatManaGrantMap } from './utils/combatManaRules.js';
 import { injectViteHmrClient } from './utils/viteHmr.js';
@@ -91,6 +92,7 @@ registerCombatantDefeatSync();
 registerCombatantHealthStateSync();
 registerMinionGroupTokenBadges();
 registerMinionGroupTokenActions();
+registerZipperTokenOverlay();
 registerTokenCombatantSync();
 registerRuleEventDispatch();
 

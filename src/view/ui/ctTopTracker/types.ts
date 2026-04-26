@@ -20,7 +20,12 @@ export interface MonsterStackTrackEntry {
 	combatants: Combatant.Implementation[];
 }
 
-export type TrackEntry = CombatantTrackEntry | MonsterStackTrackEntry;
+export interface ZipperSeparatorTrackEntry {
+	key: string;
+	kind: 'zipper-separator';
+}
+
+export type TrackEntry = CombatantTrackEntry | MonsterStackTrackEntry | ZipperSeparatorTrackEntry;
 
 export interface CombatantDropPreview {
 	sourceKey: string;

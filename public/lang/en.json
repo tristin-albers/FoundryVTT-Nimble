@@ -1656,6 +1656,18 @@
 			"playersCanMoveCards": "Players can move other players cards",
 			"warnOnEndTurnLabel": "Warn on End Turn with actions left"
 		},
+		"zipperInitiative": {
+			"selectHero": "Players: choose a hero to act",
+			"selectEnemy": "GM: choose an enemy to act",
+			"markActed": "Mark as Acted",
+			"markNotActed": "Mark as Not Acted",
+			"acted": "Acted",
+			"awaiting": "Awaiting",
+			"overflow": "Overflow — {side} continues",
+			"roundStart": "Round {round} — {side} goes first",
+			"playersChoose": "Players choose",
+			"gmChooses": "GM chooses"
+		},
 		"nimbleCombatSystemWindow": {
 			"title": "Combat System",
 			"logo": {

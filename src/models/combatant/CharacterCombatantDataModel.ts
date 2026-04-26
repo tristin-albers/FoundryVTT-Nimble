@@ -89,6 +89,16 @@ const nimbleCharacterCombatantSchema = () => ({
 		}),
 	}),
 	sort: new fields.NumberField({ required: true, nullable: false, initial: 0 }),
+	zipperTurn: new fields.SchemaField({
+		acted: new fields.BooleanField({ required: true, initial: false, nullable: false }),
+		actOrder: new fields.NumberField({
+			required: true,
+			initial: 0,
+			nullable: false,
+			integer: true,
+			min: 0,
+		}),
+	}),
 });
 
 declare namespace NimbleCharacterCombatantData {

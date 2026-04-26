@@ -10,12 +10,20 @@ export const COMBATANT_ACTIONS_CURRENT_PATH = 'system.actions.base.current';
 export const COMBATANT_ACTIONS_MAX_PATH = 'system.actions.base.max';
 const COMBAT_TURN_SOCKET_NAME = 'system.nimble';
 const ADVANCE_COMBAT_TURN_REQUEST_TYPE = 'advanceCombatTurn';
+const ZIPPER_SELECT_COMBATANT_REQUEST_TYPE = 'zipperSelectCombatant';
 
 type AdvanceCombatTurnRequest = {
 	type: typeof ADVANCE_COMBAT_TURN_REQUEST_TYPE;
 	combatId: string;
 	userId: string;
 	activeCombatantId: string | null;
+};
+
+type ZipperSelectCombatantRequest = {
+	type: typeof ZIPPER_SELECT_COMBATANT_REQUEST_TYPE;
+	combatId: string;
+	userId: string;
+	combatantId: string;
 };
 
 function toFiniteNonNegativeNumber(value: unknown): number {
@@ -127,6 +135,41 @@ async function handleAdvanceCombatTurnRequest(payload: unknown): Promise<void> {
 	await combat.nextTurn();
 }
 
+type CombatWithZipperSelect = Combat & {
+	selectZipperCombatant?: (combatantId: string) => Promise<void>;
+};
+
+async function handleZipperSelectCombatantRequest(payload: unknown): Promise<void> {
+	if (!game.user?.isGM) return;
+	if ((game.user.id ?? null) !== getPrimaryActiveGmId()) return;
+	if (!payload || typeof payload !== 'object') return;
+
+	const request = payload as Partial<ZipperSelectCombatantRequest>;
+	if (request.type !== ZIPPER_SELECT_COMBATANT_REQUEST_TYPE) return;
+
+	const combat = getCombatById(request.combatId) as CombatWithZipperSelect | null;
+	if (!combat?.started) return;
+	if (typeof combat.selectZipperCombatant !== 'function') return;
+
+	const combatantId = request.combatantId;
+	if (!combatantId || typeof combatantId !== 'string') return;
+
+	const combatant = combat.combatants.get(combatantId);
+	if (!combatant) return;
+
+	// Validate the requesting user owns the combatant
+	const requestingUser = getUserById(request.userId);
+	if (
+		!requestingUser ||
+		(!requestingUser.isGM &&
+			!combatant.actor?.testUserPermission?.(requestingUser, CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER))
+	) {
+		return;
+	}
+
+	await combat.selectZipperCombatant(combatantId);
+}
+
 let hasRegisteredCombatTurnSocketListener = false;
 
 export function registerCombatTurnSocketListener(): void {
@@ -140,6 +183,7 @@ export function registerCombatTurnSocketListener(): void {
 		| undefined;
 	socket?.on?.(COMBAT_TURN_SOCKET_NAME, (payload) => {
 		void handleAdvanceCombatTurnRequest(payload);
+		void handleZipperSelectCombatantRequest(payload);
 	});
 	Hooks.on('deleteCombat', (combat: Combat) => {
 		combatantActionMutationQueue.clearForCombat(combat.id ?? combat._id ?? null);
@@ -289,4 +333,36 @@ export async function maybeAdvanceTurnForCombatant(params: {
 		combat: params.combat,
 		activeCombatantId,
 	});
+}
+
+export async function requestZipperCombatantSelection(params: {
+	combat: Combat;
+	combatantId: string;
+}): Promise<boolean> {
+	const combatWithZipper = params.combat as CombatWithZipperSelect;
+	if (game.user?.isGM) {
+		if (typeof combatWithZipper.selectZipperCombatant === 'function') {
+			await combatWithZipper.selectZipperCombatant(params.combatantId);
+			return true;
+		}
+		return false;
+	}
+
+	if (!game.user?.id) return false;
+	if (!getPrimaryActiveGmId()) return false;
+
+	const socket = game.socket as
+		| {
+				emit?: (eventName: string, payload: ZipperSelectCombatantRequest) => void;
+		  }
+		| undefined;
+	if (!socket?.emit) return false;
+
+	socket.emit(COMBAT_TURN_SOCKET_NAME, {
+		type: ZIPPER_SELECT_COMBATANT_REQUEST_TYPE,
+		combatId: params.combat.id ?? params.combat._id ?? '',
+		userId: game.user.id,
+		combatantId: params.combatantId,
+	});
+	return true;
 }

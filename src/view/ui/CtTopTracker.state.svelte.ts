@@ -14,6 +14,10 @@ import { isCombatantDead } from '#utils/isCombatantDead.js';
 import { isCombatStarted } from '#utils/isCombatStarted.js';
 import { queueCombatantMutationWithFreshDocument } from '#utils/queueCombatantMutationWithFreshDocument.js';
 import CtSettingsDialogComponent from '#view/dialogs/CtSettingsDialog.svelte';
+import {
+	hasZipperActed,
+	isZipperInitiativeActive,
+} from '../../documents/combat/zipperTurnState.js';
 import { COMBAT_TRACKER_CLIENT_SETTING_UPDATED_EVENT_NAME } from '../../settings/combatTrackerSettings.js';
 import {
 	canCurrentUserAdjustCombatantActions,
@@ -442,6 +446,20 @@ export function createCtTopTrackerState() {
 		event.preventDefault();
 		event.stopPropagation();
 		void panCanvasToCombatant(combatant);
+	}
+
+	type CombatWithZipperToggle = Combat & {
+		toggleZipperActedState?: (combatantId: string, acted: boolean) => Promise<void>;
+	};
+
+	function handleZipperToggleActed(combatant: Combatant.Implementation): void {
+		const combat = trackerStore.currentCombat as CombatWithZipperToggle | null;
+		if (!combat || !game.user?.isGM) return;
+		if (!isZipperInitiativeActive() || !isCombatStarted(combat)) return;
+		if (typeof combat.toggleZipperActedState !== 'function') return;
+		const combatantId = getCombatantId(combatant);
+		if (!combatantId) return;
+		void combat.toggleZipperActedState(combatantId, !hasZipperActed(combatant));
 	}
 
 	function handleCombatantCardContextMenu(
@@ -900,10 +918,13 @@ export function createCtTopTrackerState() {
 
 	function canDragTrackEntry(entry: TrackEntry): boolean {
 		if (entry.kind === 'combatant') return canDragCombatant(entry.combatant);
-		return (
-			entry.combatants.length > 0 &&
-			entry.combatants.every((combatant) => canDragCombatant(combatant))
-		);
+		if (entry.kind === 'monster-stack') {
+			return (
+				entry.combatants.length > 0 &&
+				entry.combatants.every((combatant) => canDragCombatant(combatant))
+			);
+		}
+		return false;
 	}
 
 	function getDragPreviewCandidates(sourceCombatantIds: string[]): TrackEntry[] {
@@ -1027,7 +1048,12 @@ export function createCtTopTrackerState() {
 			return;
 		}
 
-		const sourceCombatants = entry.kind === 'combatant' ? [entry.combatant] : [...entry.combatants];
+		const sourceCombatants =
+			entry.kind === 'combatant'
+				? [entry.combatant]
+				: entry.kind === 'monster-stack'
+					? [...entry.combatants]
+					: [];
 		const sourceCombatantIds = sourceCombatants
 			.map((combatant) => getCombatantId(combatant))
 			.filter((combatantId): combatantId is string => combatantId.length > 0);
@@ -1252,6 +1278,9 @@ export function createCtTopTrackerState() {
 	const roundSeparatorIndex = $derived(trackerStore.roundSeparatorIndex);
 	const combatStarted = $derived(trackerStore.combatStarted);
 	const currentRoundLabel = $derived(trackerStore.currentRoundLabel);
+	const isZipperMode = $derived(trackerStore.isZipperMode);
+	const zipperCurrentSide = $derived(trackerStore.zipperCurrentSide);
+	const zipperAwaitingSelection = $derived(trackerStore.zipperAwaitingSelection);
 	const ctTrackMaxWidth = $derived(trackerStore.ctTrackMaxWidth);
 	const ctWidthPreviewVisible = $derived(trackerStore.ctWidthPreviewVisible);
 	const ctWidthPreviewMaxWidth = $derived(trackerStore.ctWidthPreviewMaxWidth);
@@ -1556,5 +1585,15 @@ export function createCtTopTrackerState() {
 		handleTrackScrollbarPointerRelease,
 		canDragCombatant,
 		canDragTrackEntry,
+		get isZipperMode() {
+			return isZipperMode;
+		},
+		get zipperCurrentSide() {
+			return zipperCurrentSide;
+		},
+		get zipperAwaitingSelection() {
+			return zipperAwaitingSelection;
+		},
+		handleZipperToggleActed,
 	};
 }

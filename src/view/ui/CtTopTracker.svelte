@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { fade } from 'svelte/transition';
+	import { hasZipperActed } from '../../documents/combat/zipperTurnState.js';
 	import { createCtTopTrackerState } from './CtTopTracker.state.svelte.js';
 	import { CT_SHELL_EXTRA_WIDTH_REM } from './ctTopTracker/constants.js';
 	import {
@@ -57,6 +58,10 @@
 	let ctCardScale = $derived(trackerViewState.ctCardScale);
 	let trackScrollbarMetrics = $derived(trackerViewState.trackScrollbarMetrics);
 	let showTrackScrollbar = $derived(trackerViewState.showTrackScrollbar);
+	let isZipperMode = $derived(trackerViewState.isZipperMode);
+	let zipperCurrentSide = $derived(trackerViewState.zipperCurrentSide);
+	let zipperAwaitingSelection = $derived(trackerViewState.zipperAwaitingSelection);
+	const handleZipperToggleActed = trackerViewState.handleZipperToggleActed;
 
 	$effect(() => {
 		trackerViewState.trackElement = trackElement;
@@ -331,7 +336,21 @@
 								>
 							</li>
 						{/if}
-						{#if entry.kind === 'combatant'}
+						{#if entry.kind === 'zipper-separator'}
+							<li class="nimble-ct__zipper-separator">
+								<span class="nimble-ct__zipper-separator-line"></span>
+								{#if zipperAwaitingSelection}
+									<span class="nimble-ct__zipper-separator-label">
+										{zipperCurrentSide === 'player'
+											? localizeWithFallback(
+													'NIMBLE.zipperInitiative.playersChoose',
+													'Players choose',
+												)
+											: localizeWithFallback('NIMBLE.zipperInitiative.gmChooses', 'GM chooses')}
+									</span>
+								{/if}
+							</li>
+						{:else if entry.kind === 'combatant'}
 							{@const actionState = getActionState(entry.combatant)}
 							{@const combatantId = getCombatantId(entry.combatant)}
 							{@const isPlayerEntry = isPlayerCombatant(entry.combatant)}
@@ -356,12 +375,14 @@
 								combatStarted && activeEntryKey === entry.key && canCurrentUserEndTurn}
 							<!-- svelte-ignore a11y_click_events_have_key_events -->
 							<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+							{@const isZipperActed = isZipperMode && hasZipperActed(entry.combatant)}
 							<li
 								class={`nimble-ct__portrait ${cardOutlineClass} ${isPlayerEntry ? 'nimble-ct__portrait--resource-drawer' : 'nimble-ct__portrait--name-drawer'}`}
 								class:nimble-ct__portrait--non-player-hp-bar={Boolean(nonPlayerHpBarData?.visible)}
 								class:nimble-ct__portrait--active={activeEntryKey === entry.key}
 								class:nimble-ct__portrait--dead={entry.combatant.defeated}
 								class:nimble-ct__portrait--draggable={canDragEntry}
+								class:nimble-ct__portrait--zipper-acted={isZipperActed}
 								class:nimble-ct__portrait--preview-gap-before={dragPreview?.targetKey ===
 									entry.key && dragPreview.before}
 								class:nimble-ct__portrait--preview-gap-after={dragPreview?.targetKey ===
@@ -398,6 +419,29 @@
 											data-ct-drag-handle="true"
 											data-track-key={entry.key}
 										></div>
+									{/if}
+									{#if isZipperActed}
+										<div class="nimble-ct__zipper-acted-badge" data-tooltip="Acted this round">
+											<i class="fa-solid fa-check"></i>
+										</div>
+									{/if}
+									{#if isZipperMode && game.user?.isGM && combatStarted}
+										<!-- svelte-ignore a11y_click_events_have_key_events -->
+										<!-- svelte-ignore a11y_no_static_element_interactions -->
+										<div
+											class="nimble-ct__zipper-toggle"
+											class:nimble-ct__zipper-toggle--acted={isZipperActed}
+											role="button"
+											tabindex="-1"
+											data-tooltip={isZipperActed ? 'Mark as Not Acted' : 'Mark as Acted'}
+											onclick={(event) => {
+												event.stopPropagation();
+												handleZipperToggleActed(entry.combatant);
+											}}
+										>
+											<i class={isZipperActed ? 'fa-solid fa-rotate-left' : 'fa-solid fa-check'}
+											></i>
+										</div>
 									{/if}
 									{#if resourceChips.length > 0}
 										<div class="nimble-ct__resource-chips">
@@ -2417,6 +2461,87 @@
 		transition:
 			font-size 140ms ease,
 			gap 140ms ease;
+	}
+	/* Zipper initiative styles */
+	.nimble-ct__zipper-separator {
+		display: inline-flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 0.32rem;
+		height: 100%;
+		margin-inline: 0.2rem;
+	}
+	.nimble-ct__zipper-separator-line {
+		width: 0;
+		height: calc(8.4rem * var(--nimble-ct-card-scale, 1));
+		border-left: 2px dashed color-mix(in srgb, hsl(142 71% 45%) 70%, transparent);
+		transition: height 140ms ease;
+	}
+	.nimble-ct__zipper-separator-label {
+		font-size: 0.68rem;
+		font-weight: 600;
+		white-space: nowrap;
+		color: hsl(142 71% 65%);
+		text-shadow: 0 0 0.32rem color-mix(in srgb, black 75%, transparent);
+		writing-mode: vertical-rl;
+		text-orientation: mixed;
+		transform: rotate(180deg);
+	}
+	.nimble-ct__portrait--zipper-acted {
+		opacity: 0.55;
+		filter: saturate(0.5);
+		transition:
+			opacity 180ms ease,
+			filter 180ms ease;
+	}
+	.nimble-ct__portrait--zipper-acted.nimble-ct__portrait--active {
+		opacity: 0.75;
+		filter: saturate(0.7);
+	}
+	.nimble-ct__zipper-acted-badge {
+		position: absolute;
+		top: -0.3rem;
+		right: -0.3rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.2rem;
+		height: 1.2rem;
+		border-radius: 50%;
+		background: hsl(142 71% 40%);
+		color: white;
+		font-size: 0.65rem;
+		z-index: 10;
+		pointer-events: none;
+		box-shadow: 0 1px 3px color-mix(in srgb, black 40%, transparent);
+	}
+	.nimble-ct__zipper-toggle {
+		position: absolute;
+		bottom: -0.2rem;
+		right: -0.2rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.1rem;
+		height: 1.1rem;
+		border-radius: 50%;
+		background: color-mix(in srgb, hsl(220 15% 20%) 90%, transparent);
+		border: 1px solid color-mix(in srgb, hsl(0 0% 100%) 25%, transparent);
+		color: hsl(0 0% 80%);
+		font-size: 0.55rem;
+		z-index: 11;
+		cursor: pointer;
+		opacity: 0;
+		transition: opacity 120ms ease;
+		pointer-events: auto;
+	}
+	.nimble-ct__portrait:hover .nimble-ct__zipper-toggle {
+		opacity: 1;
+	}
+	.nimble-ct__zipper-toggle--acted {
+		background: color-mix(in srgb, hsl(142 71% 30%) 80%, transparent);
+		color: hsl(142 71% 80%);
 	}
 	@media (max-width: 900px) {
 		.nimble-ct__icon-button {

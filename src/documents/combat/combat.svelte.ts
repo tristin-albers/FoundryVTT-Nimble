@@ -47,6 +47,23 @@ import {
 	getPersistedExpandedTurnIdentity,
 	setExpandedTurnIdentityHint,
 } from './expandedTurnIdentityStore.js';
+import {
+	buildMarkActedUpdates,
+	buildResetAllActedUpdates,
+	buildUnmarkActedUpdates,
+	buildZipperCombatFlagUpdate,
+	canSelectCombatantForZipperTurn,
+	determineFirstSide,
+	getZipperActCounter,
+	getZipperCurrentSide,
+	hasAllCombatantsActed,
+	hasZipperActed,
+	isZipperAwaitingSelection,
+	isZipperInitiativeActive,
+	resolveNextSide,
+} from './zipperTurnState.js';
+
+const COMBATANT_FALLBACK_KEY = Symbol('nimbleCombatantFallback');
 
 type CombatWithTurnIdentityHint = Combat & {
 	_nimbleExpandedTurnIdentity?: TurnIdentity | null;
@@ -688,6 +705,33 @@ class NimbleCombat extends Combat {
 		return this;
 	}
 
+	/**
+	 * During zipper selection mode, suppress the active combatant so Foundry
+	 * does not draw the d20 turn indicator on any token. Once a combatant is
+	 * selected the getter falls through to the base implementation.
+	 *
+	 * The setter stores a fallback for environments (e.g. test mocks) where the
+	 * base Combat class assigns `combatant` as a plain property in its constructor
+	 * before private fields are initialized. Uses a symbol-keyed property to avoid
+	 * conflicts.
+	 */
+	override get combatant(): Combatant.Implementation | undefined {
+		if (isZipperInitiativeActive() && isZipperAwaitingSelection(this)) {
+			return undefined;
+		}
+		return (
+			super.combatant ??
+			((this as Record<symbol, unknown>)[COMBATANT_FALLBACK_KEY] as
+				| Combatant.Implementation
+				| undefined) ??
+			undefined
+		);
+	}
+
+	override set combatant(value: Combatant.Implementation | null | undefined) {
+		(this as Record<symbol, unknown>)[COMBATANT_FALLBACK_KEY] = value;
+	}
+
 	async #applyNpcActionResetUpdates(): Promise<void> {
 		const updates = this.combatants.contents
 			.filter((combatant) => combatant.type !== 'character')
@@ -765,6 +809,23 @@ class NimbleCombat extends Combat {
 
 		await this.#applyNpcActionResetUpdates();
 		await this.#refreshCharacterHeroicReactions();
+
+		// Zipper initiative: reset acted flags and determine first side
+		if (isZipperInitiativeActive()) {
+			const resetUpdates = buildResetAllActedUpdates(this);
+			if (resetUpdates.length > 0) {
+				await this.updateEmbeddedDocuments('Combatant', resetUpdates);
+			}
+			const firstSide = determineFirstSide(this);
+			await this.update(
+				buildZipperCombatFlagUpdate({
+					currentSide: firstSide,
+					roundStartSide: firstSide,
+					awaitingSelection: true,
+					actCounter: 0,
+				}) as Parameters<Combat['update']>[0],
+			);
+		}
 
 		if (preferredStartTurnIdentity) {
 			this.#syncTurnIndexWithAliveTurns({ preferredTurnIdentity: preferredStartTurnIdentity });
@@ -1218,10 +1279,34 @@ class NimbleCombat extends Combat {
 	override setupTurns(): Combatant.Implementation[] {
 		const aliveTurns = super.setupTurns().filter((combatant) => !isCombatantDead(combatant));
 		const minionNormalizedTurns = normalizeMinionTurns(aliveTurns);
-		return expandLegendaryTurns(minionNormalizedTurns);
+		const expandedTurns = expandLegendaryTurns(minionNormalizedTurns);
+
+		if (!isZipperInitiativeActive()) return expandedTurns;
+
+		// In zipper mode: acted combatants sorted by actOrder first, then un-acted in existing order.
+		const acted: Combatant.Implementation[] = [];
+		const unacted: Combatant.Implementation[] = [];
+		for (const combatant of expandedTurns) {
+			if (hasZipperActed(combatant)) {
+				acted.push(combatant);
+			} else {
+				unacted.push(combatant);
+			}
+		}
+		acted.sort((a, b) => {
+			const aOrder = Number(foundry.utils.getProperty(a, 'system.zipperTurn.actOrder') ?? 0);
+			const bOrder = Number(foundry.utils.getProperty(b, 'system.zipperTurn.actOrder') ?? 0);
+			return aOrder - bOrder;
+		});
+		return [...acted, ...unacted];
 	}
 
 	override async nextTurn(): Promise<this> {
+		// Zipper initiative: mark current combatant as acted, flip side, enter selection
+		if (isZipperInitiativeActive()) {
+			return this.#zipperNextTurn();
+		}
+
 		this.#syncTurnIndexWithAliveTurns();
 		const preferredNextTurnIdentity = this.#resolveNextTurnIdentity();
 		const { intercepted, result } = await this.#runAtomicTurnStateOperation(
@@ -1237,6 +1322,45 @@ class NimbleCombat extends Combat {
 		await this.#refillCharacterActionsForTurnStart(this.combatant ?? null);
 
 		return result;
+	}
+
+	async #zipperNextTurn(): Promise<this> {
+		const activeCombatant = this.combatant ?? null;
+		const activeCombatantId = activeCombatant?.id ?? null;
+
+		// Mark the current combatant (and its minion group) as acted
+		if (activeCombatantId && activeCombatant && !hasZipperActed(activeCombatant)) {
+			const actedUpdates = buildMarkActedUpdates(this, activeCombatantId);
+			if (actedUpdates.length > 0) {
+				await this.updateEmbeddedDocuments('Combatant', actedUpdates);
+			}
+			const nextCounter = getZipperActCounter(this) + 1;
+			await this.update(
+				buildZipperCombatFlagUpdate({ actCounter: nextCounter }) as Parameters<Combat['update']>[0],
+			);
+		}
+
+		// Check if all combatants have acted — if so, advance to next round
+		if (hasAllCombatantsActed(this)) {
+			return this.nextRound();
+		}
+
+		// Flip side and enter selection mode
+		const currentSide = getZipperCurrentSide(this);
+		const nextSide = resolveNextSide(this, currentSide);
+		await this.update(
+			buildZipperCombatFlagUpdate({
+				currentSide: nextSide,
+				awaitingSelection: true,
+			}) as Parameters<Combat['update']>[0],
+		);
+
+		// Rebuild turns so acted cards move left
+		this.turns = this.setupTurns();
+		this.#syncTurnIndexWithAliveTurns();
+		await this.#persistAtomicTurnState({ turn: this.turn });
+
+		return this as this;
 	}
 
 	override async nextRound(): Promise<this> {
@@ -1255,7 +1379,38 @@ class NimbleCombat extends Combat {
 		await this.#resetCharacterPipTypesForNewRound();
 		await this.#removeHesitantConditionAfterRoundOne();
 
+		// Zipper initiative: reset all acted flags and re-enter selection mode
+		if (isZipperInitiativeActive()) {
+			const resetUpdates = buildResetAllActedUpdates(this);
+			if (resetUpdates.length > 0) {
+				await this.updateEmbeddedDocuments('Combatant', resetUpdates);
+			}
+			const { roundStartSide } = this.#readZipperFlags();
+			await this.update(
+				buildZipperCombatFlagUpdate({
+					currentSide: roundStartSide,
+					awaitingSelection: true,
+					actCounter: 0,
+				}) as Parameters<Combat['update']>[0],
+			);
+			this.turns = this.setupTurns();
+			this.#syncTurnIndexWithAliveTurns();
+		}
+
 		return result;
+	}
+
+	#readZipperFlags(): {
+		currentSide: import('./zipperTurnState.js').ZipperSide;
+		roundStartSide: import('./zipperTurnState.js').ZipperSide;
+	} {
+		return {
+			currentSide: getZipperCurrentSide(this),
+			roundStartSide:
+				foundry.utils.getProperty(this, 'flags.nimble.zipper.roundStartSide') === 'gm'
+					? 'gm'
+					: 'player',
+		};
 	}
 
 	override async previousTurn(): Promise<this> {
@@ -1314,6 +1469,77 @@ class NimbleCombat extends Combat {
 
 	override _sortCombatants(a: Combatant.Implementation, b: Combatant.Implementation): number {
 		return sortCombatants(a, b);
+	}
+
+	/**
+	 * Select a combatant to take their turn in zipper initiative mode.
+	 * Called when a player clicks their token overlay or the GM selects an enemy.
+	 */
+	async selectZipperCombatant(combatantId: string): Promise<void> {
+		if (!isZipperInitiativeActive()) return;
+
+		const currentSide = getZipperCurrentSide(this);
+		const validation = canSelectCombatantForZipperTurn(this, combatantId, currentSide);
+		if (!validation.valid) return;
+
+		const combatant = this.combatants.get(combatantId);
+		if (!combatant) return;
+
+		// Rebuild turns and find the target combatant's index.
+		this.turns = this.setupTurns();
+		const turnIdentity: TurnIdentity = { combatantId, occurrence: null };
+		const targetIndex = this.#findTurnIndexByIdentity(this.turns, turnIdentity);
+		if (targetIndex < 0) return;
+
+		// Update local state immediately.
+		this.turn = targetIndex;
+		this.#storeExpandedTurnIdentity(
+			this.#resolveTurnIdentityAtIndex(this.turns, targetIndex) ?? turnIdentity,
+		);
+
+		// Persist the turn index, awaitingSelection flag, and turn identity in a
+		// single update. Bypass #runAtomicTurnStateOperation and the update override
+		// by calling super.update directly — the values are already fully resolved
+		// and the override's re-resolution can fight with our intent.
+		await super.update({
+			turn: targetIndex,
+			...buildZipperCombatFlagUpdate({ awaitingSelection: false }),
+			...buildExpandedTurnIdentityUpdate(
+				this.#resolveTurnIdentityAtIndex(this.turns, targetIndex) ?? turnIdentity,
+			),
+		} as Parameters<Combat['update']>[0]);
+
+		// Combat Readiness: refill actions for the combatant whose turn is starting
+		await this.#refillCharacterActionsForTurnStart(this.combatant ?? null);
+	}
+
+	/**
+	 * GM-only override to manually mark/unmark a combatant as acted.
+	 * Does not flip side or trigger selection mode — pure bookkeeping correction.
+	 */
+	async toggleZipperActedState(combatantId: string, acted: boolean): Promise<void> {
+		if (!isZipperInitiativeActive()) return;
+		if (!game.user?.isGM) return;
+
+		if (acted) {
+			const actedUpdates = buildMarkActedUpdates(this, combatantId);
+			if (actedUpdates.length > 0) {
+				await this.updateEmbeddedDocuments('Combatant', actedUpdates);
+			}
+			const nextCounter = getZipperActCounter(this) + 1;
+			await this.update(
+				buildZipperCombatFlagUpdate({ actCounter: nextCounter }) as Parameters<Combat['update']>[0],
+			);
+		} else {
+			const unactedUpdates = buildUnmarkActedUpdates(this, combatantId);
+			if (unactedUpdates.length > 0) {
+				await this.updateEmbeddedDocuments('Combatant', unactedUpdates);
+			}
+		}
+
+		this.turns = this.setupTurns();
+		this.#syncTurnIndexWithAliveTurns();
+		await this.#persistAtomicTurnState({ turn: this.turn });
 	}
 
 	async _onDrop(event: DragEvent & { target: EventTarget & HTMLElement }) {

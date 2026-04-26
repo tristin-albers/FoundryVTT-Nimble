@@ -1,4 +1,10 @@
 import {
+	getZipperCurrentSide,
+	isZipperAwaitingSelection,
+	isZipperInitiativeActive,
+	type ZipperSide,
+} from '../../../documents/combat/zipperTurnState.js';
+import {
 	getCombatTrackerCtCardSizeLevel,
 	getCombatTrackerCtEnabled,
 	getCombatTrackerCtLeftToRightOrdering,
@@ -195,6 +201,23 @@ export class CtTopTrackerStore {
 	currentRoundLabel = $derived.by(() => {
 		trackDependency(this.renderVersion);
 		return Math.max(1, this.currentCombat?.round ?? 1);
+	});
+
+	isZipperMode = $derived.by(() => {
+		trackDependency(this.renderVersion);
+		return isZipperInitiativeActive();
+	});
+
+	zipperCurrentSide: ZipperSide = $derived.by(() => {
+		trackDependency(this.renderVersion);
+		if (!this.currentCombat) return 'player';
+		return getZipperCurrentSide(this.currentCombat);
+	});
+
+	zipperAwaitingSelection = $derived.by(() => {
+		trackDependency(this.renderVersion);
+		if (!this.currentCombat) return false;
+		return isZipperAwaitingSelection(this.currentCombat);
 	});
 
 	ctTrackMaxWidth = $derived.by(() => {

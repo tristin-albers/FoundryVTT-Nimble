@@ -5,6 +5,10 @@ import {
 	setExpandedTurnIdentityHint,
 } from '../../../documents/combat/expandedTurnIdentityStore.js';
 import {
+	hasZipperActed,
+	isZipperInitiativeActive,
+} from '../../../documents/combat/zipperTurnState.js';
+import {
 	getCombatantCurrentActions,
 	getCombatantMaxActions,
 } from '../../../utils/combatTurnActions.js';
@@ -350,7 +354,8 @@ export function isEligibleForInitiativeRoll(combatant: Combatant.Implementation)
 
 export function getTrackEntryCombatantId(entry: TrackEntry): string {
 	if (entry.kind === 'combatant') return getCombatantId(entry.combatant);
-	return getCombatantId(entry.combatants[0]);
+	if (entry.kind === 'monster-stack') return getCombatantId(entry.combatants[0]);
+	return '';
 }
 
 export function getTrackEntryCombatantIds(entry: TrackEntry): string[] {
@@ -359,9 +364,13 @@ export function getTrackEntryCombatantIds(entry: TrackEntry): string[] {
 		return combatantId ? [combatantId] : [];
 	}
 
-	return entry.combatants
-		.map((combatant) => getCombatantId(combatant))
-		.filter((combatantId): combatantId is string => combatantId.length > 0);
+	if (entry.kind === 'monster-stack') {
+		return entry.combatants
+			.map((combatant) => getCombatantId(combatant))
+			.filter((combatantId): combatantId is string => combatantId.length > 0);
+	}
+
+	return [];
 }
 
 function createMonsterStackEntry(
@@ -429,6 +438,25 @@ export function buildAliveEntries(
 	}
 
 	flushPendingMonsterStack();
+
+	// In zipper mode, insert a separator between acted and un-acted entries
+	if (isZipperInitiativeActive() && entries.length > 0) {
+		const separatorIndex = entries.findIndex((entry) => {
+			if (entry.kind === 'combatant') return !hasZipperActed(entry.combatant);
+			if (entry.kind === 'monster-stack') {
+				return entry.combatants.some((combatant) => !hasZipperActed(combatant));
+			}
+			return false;
+		});
+		// Only insert if there are both acted and un-acted entries
+		if (separatorIndex > 0) {
+			entries.splice(separatorIndex, 0, {
+				key: 'zipper-separator',
+				kind: 'zipper-separator',
+			});
+		}
+	}
+
 	return entries;
 }
 
