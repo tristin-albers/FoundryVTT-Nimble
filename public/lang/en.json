@@ -1671,7 +1671,8 @@
 			"playerTurn": "Player Turn",
 			"gmTurn": "GM Turn",
 			"yourTurn": "Your turn — select a hero to act",
-			"gmSelectEnemy": "Select an enemy to act"
+			"gmSelectEnemy": "Select an enemy to act",
+			"hesitantBlocked": "Hesitant heroes must wait for non-hesitant heroes to act first"
 		},
 		"nimbleCombatSystemWindow": {
 			"title": "Combat System",

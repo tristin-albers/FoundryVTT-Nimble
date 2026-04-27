@@ -26,7 +26,9 @@ import { rollInitiativeForCombatant } from './combatInitiative.js';
 import { performMinionGroupAttack } from './combatMinionAttacks.js';
 import {
 	assignNcsTemporaryGroupFromAttackMembers,
+	assignPersistentTurnGroup,
 	dissolveRoundBoundaryMinionGroups,
+	removeCombatantFromTurnGroup,
 } from './combatMinionGroups.js';
 import {
 	applyGmSort,
@@ -1328,6 +1330,15 @@ class NimbleCombat extends Combat {
 		const activeCombatant = this.combatant ?? null;
 		const activeCombatantId = activeCombatant?.id ?? null;
 
+		// Refill actions for the outgoing combatant (mirrors _onEndTurn behavior)
+		if (activeCombatant && activeCombatant.type === 'character') {
+			await activeCombatant.update({
+				'system.actions.base.current': getCombatantBaseActionMax(activeCombatant),
+				'system.actions.base.additional': 0,
+				...this.#buildHeroicReactionAvailabilityUpdate(true),
+			} as Record<string, unknown>);
+		}
+
 		// Mark the current combatant (and its minion group) as acted
 		if (activeCombatantId && activeCombatant && !hasZipperActed(activeCombatant)) {
 			const actedUpdates = buildMarkActedUpdates(this, activeCombatantId);
@@ -1584,6 +1595,33 @@ class NimbleCombat extends Combat {
 		this.turns = this.setupTurns();
 		this.#syncTurnIndexWithAliveTurns();
 		await this.#persistAtomicTurnState({ turn: this.turn });
+	}
+
+	/**
+	 * GM-only: assign combatants into a persistent turn group that acts together.
+	 * The first combatant becomes the group leader.
+	 */
+	async createPersistentTurnGroup(combatantIds: string[]): Promise<void> {
+		await assignPersistentTurnGroup({
+			combat: this,
+			memberCombatantIds: combatantIds,
+			resolveCurrentTurnIdentity: () => this.#resolveCurrentTurnIdentity(),
+			syncTurnToCombatant: (combatantIdOrIdentity, options) =>
+				this.#syncTurnToCombatant(combatantIdOrIdentity, options),
+		});
+	}
+
+	/**
+	 * GM-only: remove a combatant from its persistent turn group.
+	 */
+	async removeFromTurnGroup(combatantId: string): Promise<void> {
+		await removeCombatantFromTurnGroup({
+			combat: this,
+			combatantId,
+			resolveCurrentTurnIdentity: () => this.#resolveCurrentTurnIdentity(),
+			syncTurnToCombatant: (combatantIdOrIdentity, options) =>
+				this.#syncTurnToCombatant(combatantIdOrIdentity, options),
+		});
 	}
 
 	async _onDrop(event: DragEvent & { target: EventTarget & HTMLElement }) {

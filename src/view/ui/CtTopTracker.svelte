@@ -4,7 +4,9 @@
 		getCombatantZipperSide,
 		getZipperCurrentSide,
 		hasZipperActed,
+		isHesitantBlocked,
 	} from '../../documents/combat/zipperTurnState.js';
+	import { getMinionGroupId } from '../../utils/minionGrouping.js';
 	import { createCtTopTrackerState } from './CtTopTracker.state.svelte.js';
 	import { CT_SHELL_EXTRA_WIDTH_REM } from './ctTopTracker/constants.js';
 	import {
@@ -68,6 +70,13 @@
 	let zipperOverflow = $derived(trackerViewState.zipperOverflow);
 	const handleZipperToggleActed = trackerViewState.handleZipperToggleActed;
 	const handleZipperCardSelect = trackerViewState.handleZipperCardSelect;
+	let turnGroupSelectionActive = $derived(trackerViewState.turnGroupSelectionActive);
+	let turnGroupSelection = $derived(trackerViewState.turnGroupSelection);
+	const startTurnGroupSelection = trackerViewState.startTurnGroupSelection;
+	const toggleTurnGroupSelectionMember = trackerViewState.toggleTurnGroupSelectionMember;
+	const confirmTurnGroupSelection = trackerViewState.confirmTurnGroupSelection;
+	const cancelTurnGroupSelection = trackerViewState.cancelTurnGroupSelection;
+	const handleUngroupCombatant = trackerViewState.handleUngroupCombatant;
 
 	$effect(() => {
 		trackerViewState.trackElement = trackElement;
@@ -86,6 +95,8 @@
 	const handleCombatantCardClick = trackerViewState.handleCombatantCardClick;
 	const handleCombatantCardContextMenu = trackerViewState.handleCombatantCardContextMenu;
 	const handleCombatantCardKeyDown = trackerViewState.handleCombatantCardKeyDown;
+	const handleCombatantCardMouseEnter = trackerViewState.handleCombatantCardMouseEnter;
+	const handleCombatantCardMouseLeave = trackerViewState.handleCombatantCardMouseLeave;
 	const canRemoveCombatant = trackerViewState.canRemoveCombatant;
 	const handleRemoveCombatant = trackerViewState.handleRemoveCombatant;
 	const handleMonsterStackClick = trackerViewState.handleMonsterStackClick;
@@ -277,6 +288,27 @@
 					{/if}
 				</div>
 			{/if}
+			{#if turnGroupSelectionActive}
+				<div class="nimble-ct__group-confirm-bar">
+					<span class="nimble-ct__group-confirm-label">
+						<i class="fa-solid fa-object-group"></i>
+						Select combatants to group ({turnGroupSelection.size} selected)
+					</span>
+					<button
+						class="nimble-ct__group-confirm-btn nimble-ct__group-confirm-btn--confirm"
+						disabled={turnGroupSelection.size < 2}
+						onclick={() => void confirmTurnGroupSelection()}
+					>
+						<i class="fa-solid fa-check"></i> Confirm
+					</button>
+					<button
+						class="nimble-ct__group-confirm-btn nimble-ct__group-confirm-btn--cancel"
+						onclick={cancelTurnGroupSelection}
+					>
+						<i class="fa-solid fa-xmark"></i> Cancel
+					</button>
+				</div>
+			{/if}
 			{#if game.user?.isGM}
 				<div class="nimble-ct__controls faded-ui" aria-label="Combat controls left">
 					{#if hasMonsterCombatants && canCurrentUserToggleMonsterCards}
@@ -416,6 +448,10 @@
 							<!-- svelte-ignore a11y_click_events_have_key_events -->
 							<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 							{@const isZipperActed = isZipperMode && hasZipperActed(entry.combatant)}
+							{@const isZipperHesitantBlocked =
+								isZipperMode && currentCombat && getCombatantId(entry.combatant)
+									? isHesitantBlocked(currentCombat, getCombatantId(entry.combatant)!)
+									: false}
 							<li
 								class={`nimble-ct__portrait ${cardOutlineClass} ${isPlayerEntry ? 'nimble-ct__portrait--resource-drawer' : 'nimble-ct__portrait--name-drawer'}`}
 								class:nimble-ct__portrait--non-player-hp-bar={Boolean(nonPlayerHpBarData?.visible)}
@@ -444,6 +480,8 @@
 									onclick={(event) => handleCombatantCardClick(event, entry.combatant)}
 									oncontextmenu={(event) => handleCombatantCardContextMenu(event, entry.combatant)}
 									onkeydown={(event) => handleCombatantCardKeyDown(event, entry.combatant)}
+									onmouseenter={() => handleCombatantCardMouseEnter(entry.combatant)}
+									onmouseleave={() => handleCombatantCardMouseLeave(entry.combatant)}
 								>
 									<img
 										class="nimble-ct__image"
@@ -488,15 +526,83 @@
 										<!-- svelte-ignore a11y_no_static_element_interactions -->
 										<div
 											class="nimble-ct__zipper-select"
+											class:nimble-ct__zipper-select--disabled={isZipperHesitantBlocked}
 											role="button"
 											tabindex="-1"
-											data-tooltip="Select to act"
+											data-tooltip={isZipperHesitantBlocked
+												? (game.i18n?.localize('NIMBLE.zipperInitiative.hesitantBlocked') ??
+													'Hesitant heroes must wait')
+												: 'Select to act'}
 											onclick={(event) => {
 												event.stopPropagation();
+												if (isZipperHesitantBlocked) return;
 												handleZipperCardSelect(entry.combatant);
 											}}
 										>
 											<i class="fa-solid fa-check"></i>
+										</div>
+									{/if}
+									{#if game.user?.isGM && isZipperMode && combatStarted}
+										{@const combatantGroupId = getMinionGroupId(entry.combatant)}
+										{@const isInGroupSelection =
+											turnGroupSelectionActive && getCombatantId(entry.combatant)
+												? turnGroupSelection.has(getCombatantId(entry.combatant)!)
+												: false}
+										{#if turnGroupSelectionActive}
+											<!-- svelte-ignore a11y_click_events_have_key_events -->
+											<!-- svelte-ignore a11y_no_static_element_interactions -->
+											<div
+												class="nimble-ct__group-select-overlay"
+												class:nimble-ct__group-select-overlay--selected={isInGroupSelection}
+												role="button"
+												tabindex="-1"
+												data-tooltip={isInGroupSelection ? 'Remove from group' : 'Add to group'}
+												onclick={(event) => {
+													event.stopPropagation();
+													toggleTurnGroupSelectionMember(entry.combatant);
+												}}
+											>
+												<i
+													class={isInGroupSelection
+														? 'fa-solid fa-check-circle'
+														: 'fa-regular fa-circle'}
+												></i>
+											</div>
+										{:else if !combatantGroupId}
+											<!-- svelte-ignore a11y_click_events_have_key_events -->
+											<!-- svelte-ignore a11y_no_static_element_interactions -->
+											<div
+												class="nimble-ct__group-action"
+												role="button"
+												tabindex="-1"
+												data-tooltip="Start group selection"
+												onclick={(event) => {
+													event.stopPropagation();
+													startTurnGroupSelection(entry.combatant);
+												}}
+											>
+												<i class="fa-solid fa-object-group"></i>
+											</div>
+										{:else}
+											<!-- svelte-ignore a11y_click_events_have_key_events -->
+											<!-- svelte-ignore a11y_no_static_element_interactions -->
+											<div
+												class="nimble-ct__group-action nimble-ct__group-action--ungroup"
+												role="button"
+												tabindex="-1"
+												data-tooltip="Remove from group"
+												onclick={(event) => {
+													event.stopPropagation();
+													void handleUngroupCombatant(entry.combatant);
+												}}
+											>
+												<i class="fa-solid fa-object-ungroup"></i>
+											</div>
+										{/if}
+									{/if}
+									{#if getMinionGroupId(entry.combatant) && !(game.user?.isGM && isZipperMode && combatStarted)}
+										<div class="nimble-ct__group-badge" data-tooltip="Part of a turn group">
+											<i class="fa-solid fa-link"></i>
 										</div>
 									{/if}
 									{#if resourceChips.length > 0}
@@ -725,6 +831,8 @@
 									onclick={(event) => handleCombatantCardClick(event, combatant)}
 									oncontextmenu={(event) => handleCombatantCardContextMenu(event, combatant)}
 									onkeydown={(event) => handleCombatantCardKeyDown(event, combatant)}
+									onmouseenter={() => handleCombatantCardMouseEnter(combatant)}
+									onmouseleave={() => handleCombatantCardMouseLeave(combatant)}
 								>
 									<img
 										class="nimble-ct__image"
@@ -2568,11 +2676,11 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 1.2rem;
-		height: 1.2rem;
-		border-radius: 50%;
-		background: hsl(142 71% 40%);
-		color: white;
+		padding: 0.15rem 0.25rem;
+		border-radius: 0.25rem;
+		background: color-mix(in srgb, hsl(220 60% 15%) 95%, hsl(217 91% 60%));
+		border: 1px solid hsl(217 91% 60% / 0.95);
+		color: hsl(220 80% 95%);
 		font-size: 0.65rem;
 		z-index: 10;
 		pointer-events: none;
@@ -2607,26 +2715,47 @@
 	}
 	.nimble-ct__zipper-select {
 		position: absolute;
-		bottom: -0.25rem;
-		right: -0.25rem;
+		bottom: clamp(1.4rem, calc(1.7rem * var(--nimble-ct-card-scale, 1)), 1.85rem);
+		left: 50%;
+		transform: translateX(-50%);
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 1.25rem;
-		height: 1.25rem;
-		border-radius: 50%;
-		background: hsl(142 71% 40%);
-		border: 1.5px solid hsl(0 0% 100% / 0.7);
-		color: white;
-		font-size: 0.6rem;
+		padding: 0.15rem 0.25rem;
+		border-radius: 0.25rem;
+		background: color-mix(in srgb, hsl(142 30% 12%) 95%, hsl(142 71% 45%));
+		border: 1px solid hsl(142 71% 45% / 0.95);
+		color: hsl(142 71% 90%);
+		font-size: 0.65rem;
 		z-index: 12;
 		cursor: pointer;
 		pointer-events: auto;
 		box-shadow: 0 1px 4px color-mix(in srgb, black 40%, transparent);
 		transition: transform 120ms ease;
+		animation: nimble-ct-zipper-select-fade-in 200ms ease;
+	}
+	@keyframes nimble-ct-zipper-select-fade-in {
+		from {
+			opacity: 0;
+			transform: translateX(-50%) scale(0.7);
+		}
+		to {
+			opacity: 1;
+			transform: translateX(-50%) scale(1);
+		}
 	}
 	.nimble-ct__zipper-select:hover {
-		transform: scale(1.15);
+		transform: translateX(-50%) scale(1.15);
+	}
+	.nimble-ct__zipper-select--disabled {
+		background: color-mix(in srgb, hsl(0 0% 15%) 95%, hsl(0 0% 45%));
+		border-color: hsl(0 0% 45% / 0.5);
+		color: hsl(0 0% 60%);
+		cursor: not-allowed;
+		opacity: 0.5;
+	}
+	.nimble-ct__zipper-select--disabled:hover {
+		transform: translateX(-50%);
 	}
 	.nimble-ct__zipper-side-indicator {
 		position: absolute;
@@ -2661,6 +2790,139 @@
 		border-color: color-mix(in srgb, hsl(0 71% 45%) 50%, transparent);
 		color: hsl(0 71% 80%);
 	}
+
+	/* Turn group selection */
+	.nimble-ct__group-confirm-bar {
+		position: absolute;
+		top: -1.5rem;
+		right: 0;
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
+		padding: 0.18rem 0.5rem;
+		border-radius: 0.25rem;
+		font-size: 0.65rem;
+		font-weight: 600;
+		white-space: nowrap;
+		z-index: 21;
+		background: color-mix(in srgb, hsl(210 60% 20%) 92%, transparent);
+		border: 1px solid color-mix(in srgb, hsl(210 71% 45%) 50%, transparent);
+		color: hsl(210 71% 80%);
+	}
+	.nimble-ct__group-confirm-label {
+		display: flex;
+		align-items: center;
+		gap: 0.3rem;
+	}
+	.nimble-ct__group-confirm-btn {
+		all: unset;
+		display: flex;
+		align-items: center;
+		gap: 0.2rem;
+		padding: 0.1rem 0.4rem;
+		border-radius: 0.2rem;
+		font-size: 0.6rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: background 120ms ease;
+	}
+	.nimble-ct__group-confirm-btn--confirm {
+		background: hsl(142 60% 30%);
+		color: hsl(142 71% 90%);
+	}
+	.nimble-ct__group-confirm-btn--confirm:hover:not(:disabled) {
+		background: hsl(142 60% 40%);
+	}
+	.nimble-ct__group-confirm-btn--confirm:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
+	}
+	.nimble-ct__group-confirm-btn--cancel {
+		background: hsl(0 50% 35%);
+		color: hsl(0 50% 90%);
+	}
+	.nimble-ct__group-confirm-btn--cancel:hover {
+		background: hsl(0 50% 45%);
+	}
+	.nimble-ct__group-select-overlay {
+		position: absolute;
+		top: 0.2rem;
+		left: 0.2rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.1rem;
+		height: 1.1rem;
+		border-radius: 50%;
+		background: color-mix(in srgb, hsl(210 60% 30%) 80%, transparent);
+		border: 1.5px solid hsl(210 60% 60% / 0.6);
+		color: hsl(210 60% 75%);
+		font-size: 0.55rem;
+		z-index: 12;
+		cursor: pointer;
+		pointer-events: auto;
+		transition: background 120ms ease;
+	}
+	.nimble-ct__group-select-overlay--selected {
+		background: hsl(210 70% 45%);
+		border-color: hsl(210 80% 70%);
+		color: white;
+	}
+	.nimble-ct__group-action {
+		position: absolute;
+		top: 0.2rem;
+		left: 0.2rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.1rem;
+		height: 1.1rem;
+		border-radius: 50%;
+		background: color-mix(in srgb, hsl(220 15% 20%) 80%, transparent);
+		border: 1px solid hsl(0 0% 50% / 0.3);
+		color: hsl(0 0% 65%);
+		font-size: 0.5rem;
+		z-index: 12;
+		cursor: pointer;
+		pointer-events: auto;
+		opacity: 0;
+		transition:
+			opacity 150ms ease,
+			background 120ms ease;
+	}
+	.nimble-ct__portrait-card:hover .nimble-ct__group-action {
+		opacity: 1;
+	}
+	.nimble-ct__group-action:hover {
+		background: color-mix(in srgb, hsl(220 15% 35%) 80%, transparent);
+		color: hsl(0 0% 85%);
+	}
+	.nimble-ct__group-action--ungroup {
+		color: hsl(30 70% 65%);
+	}
+	.nimble-ct__group-action--ungroup:hover {
+		background: color-mix(in srgb, hsl(30 50% 25%) 80%, transparent);
+		color: hsl(30 70% 80%);
+	}
+
+	.nimble-ct__group-badge {
+		position: absolute;
+		top: 0.2rem;
+		left: 0.2rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 1rem;
+		height: 1rem;
+		border-radius: 50%;
+		background: color-mix(in srgb, hsl(210 60% 30%) 80%, transparent);
+		border: 1px solid hsl(210 60% 50% / 0.4);
+		color: hsl(210 60% 75%);
+		font-size: 0.45rem;
+		z-index: 11;
+		pointer-events: none;
+	}
+
 	@media (max-width: 900px) {
 		.nimble-ct__icon-button {
 			width: 1.36rem;

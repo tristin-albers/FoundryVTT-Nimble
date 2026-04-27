@@ -5,6 +5,7 @@ import {
 	getMinionGroupSummaries,
 	isMinionCombatant,
 	isMinionGrouped,
+	isMinionGroupTemporary,
 	MINION_GROUP_FLAG_ROOT,
 	MINION_GROUP_ID_PATH,
 	MINION_GROUP_ROLE_PATH,
@@ -245,7 +246,13 @@ export async function dissolveRoundBoundaryMinionGroups(params: {
 }): Promise<void> {
 	if (!game.user?.isGM) return;
 
-	const groupIdsToDissolve = [...getMinionGroupSummaries(params.combat.combatants.contents).keys()];
+	// Only dissolve temporary groups — persistent turn groups survive round boundaries
+	const allGroupIds = [...getMinionGroupSummaries(params.combat.combatants.contents).keys()];
+	const groupIdsToDissolve = allGroupIds.filter((groupId) =>
+		params.combat.combatants.contents.some(
+			(c) => getMinionGroupId(c) === groupId && isMinionGroupTemporary(c),
+		),
+	);
 	if (groupIdsToDissolve.length === 0) return;
 
 	await dissolveMinionGroupsByIds({
@@ -322,5 +329,138 @@ export async function assignNcsTemporaryGroupFromAttackMembers(params: {
 		memberIds: orderedMembers.map((member) => member.id),
 		sharedInitiative,
 		sharedSort,
+	});
+}
+
+/**
+ * Assign combatants of any type into a persistent turn group.
+ * The first combatant becomes the group leader; the rest become members.
+ * Unlike NCS temporary groups, these persist across rounds.
+ */
+export async function assignPersistentTurnGroup(params: {
+	combat: Combat;
+	memberCombatantIds: string[];
+	resolveCurrentTurnIdentity: () => TurnIdentity | null;
+	syncTurnToCombatant: SyncTurnToCombatant;
+}): Promise<void> {
+	if (!game.user?.isGM) return;
+
+	const uniqueIds = normalizeUniqueIds(params.memberCombatantIds);
+	if (uniqueIds.length < 2) return;
+
+	const members = resolveCombatantsByIds(params.combat, uniqueIds).filter(
+		(c) => !isCombatantDead(c),
+	);
+	if (members.length < 2) return;
+
+	const orderedMembers = sortCombatantsByCurrentTurnOrder(params.combat.turns, members);
+	const leader = orderedMembers[0];
+	if (!leader?.id) return;
+
+	const previousActiveTurnIdentity = params.resolveCurrentTurnIdentity();
+	const groupId = foundry.utils.randomID();
+	const sharedInitiative = Number(leader.initiative ?? 0);
+	const sharedSort = getCombatantManualSortValue(leader);
+
+	const updates = orderedMembers.reduce<Record<string, unknown>[]>((acc, member) => {
+		if (!member.id) return acc;
+		acc.push({
+			_id: member.id,
+			[MINION_GROUP_ID_PATH]: groupId,
+			[MINION_GROUP_ROLE_PATH]: member.id === leader.id ? 'leader' : 'member',
+			[MINION_GROUP_TEMPORARY_PATH]: false,
+			initiative: sharedInitiative,
+			'system.sort': sharedSort,
+		});
+		return acc;
+	}, []);
+	if (updates.length === 0) return;
+
+	await params.combat.updateEmbeddedDocuments('Combatant', updates);
+	params.combat.turns = params.combat.setupTurns();
+
+	const desiredActiveId = resolveDesiredActiveIdAfterRegroup({
+		previousActiveCombatantId: previousActiveTurnIdentity?.combatantId,
+		leaderId: leader.id,
+		orderedMembers,
+	});
+	await params.syncTurnToCombatant(
+		desiredActiveId && previousActiveTurnIdentity?.combatantId === desiredActiveId
+			? previousActiveTurnIdentity
+			: desiredActiveId,
+		{ persist: false },
+	);
+
+	logMinionGroupingCombat('assigned persistent turn group', {
+		combatId: params.combat.id ?? null,
+		groupId,
+		leaderId: leader.id,
+		memberIds: orderedMembers.map((member) => member.id),
+	});
+}
+
+/**
+ * Remove a combatant from its persistent turn group.
+ * If only one member remains, the group is dissolved entirely.
+ */
+export async function removeCombatantFromTurnGroup(params: {
+	combat: Combat;
+	combatantId: string;
+	resolveCurrentTurnIdentity: () => TurnIdentity | null;
+	syncTurnToCombatant: SyncTurnToCombatant;
+}): Promise<void> {
+	if (!game.user?.isGM) return;
+
+	const combatant = params.combat.combatants.get(params.combatantId);
+	if (!combatant) return;
+
+	const groupId = getMinionGroupId(combatant);
+	if (!groupId) return;
+
+	const previousActiveTurnIdentity = params.resolveCurrentTurnIdentity();
+	const updatesById = new Map<string, Record<string, unknown>>();
+
+	// Remove the target combatant from the group
+	setCombatantUpdate(updatesById, params.combatantId, { [MINION_GROUP_FLAG_ROOT]: null });
+
+	// Check remaining group members and handle leader reassignment / dissolution
+	const remainingMembers = params.combat.combatants.contents.filter(
+		(c) => c.id !== params.combatantId && getMinionGroupId(c) === groupId && !isCombatantDead(c),
+	);
+
+	if (remainingMembers.length < 2) {
+		// Dissolve: only 0 or 1 members left
+		for (const member of remainingMembers) {
+			if (member.id) {
+				setCombatantUpdate(updatesById, member.id, { [MINION_GROUP_FLAG_ROOT]: null });
+			}
+		}
+	} else if (combatant.id && getMinionGroupId(combatant) === groupId) {
+		// If the removed combatant was the leader, reassign
+		const summary = getMinionGroupSummaries(params.combat.combatants.contents).get(groupId);
+		if (summary) {
+			const wasLeader = summary.members.find((m) => m.id === params.combatantId);
+			if (wasLeader && (wasLeader as any).role === 'leader') {
+				const newLeader = remainingMembers[0];
+				if (newLeader?.id) {
+					setCombatantUpdate(updatesById, newLeader.id, {
+						[MINION_GROUP_ROLE_PATH]: 'leader',
+					});
+				}
+			}
+		}
+	}
+
+	const updates = [...updatesById.values()];
+	if (updates.length === 0) return;
+
+	await params.combat.updateEmbeddedDocuments('Combatant', updates);
+	params.combat.turns = params.combat.setupTurns();
+	await params.syncTurnToCombatant(previousActiveTurnIdentity);
+
+	logMinionGroupingCombat('removed combatant from turn group', {
+		combatId: params.combat.id ?? null,
+		groupId,
+		removedId: params.combatantId,
 	});
 }

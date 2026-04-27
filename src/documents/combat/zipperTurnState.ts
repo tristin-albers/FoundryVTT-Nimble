@@ -284,6 +284,29 @@ export function determineFirstSide(combat: Combat): ZipperSide {
 }
 
 // ---------------------------------------------------------------------------
+// Hesitant combatant helpers
+// ---------------------------------------------------------------------------
+
+export function isHesitantCombatant(combatant: Combatant.Implementation): boolean {
+	const actor = combatant.actor as { statuses?: Set<string> } | null;
+	return Boolean(actor?.statuses?.has('hesitant'));
+}
+
+/**
+ * A hesitant combatant is blocked from acting while non-hesitant combatants
+ * on the player side remain unacted. Only applies to player-side combatants.
+ */
+export function isHesitantBlocked(combat: Combat, combatantId: string): boolean {
+	const combatant = combat.combatants.get(combatantId);
+	if (!combatant) return false;
+	if (getCombatantZipperSide(combatant) !== 'player') return false;
+	if (!isHesitantCombatant(combatant)) return false;
+
+	const unactedPlayers = getUnactedCombatantsForSide(combat, 'player');
+	return unactedPlayers.some((c) => c.id !== combatantId && !isHesitantCombatant(c));
+}
+
+// ---------------------------------------------------------------------------
 // Validation for combatant selection
 // ---------------------------------------------------------------------------
 
@@ -298,6 +321,9 @@ export function canSelectCombatantForZipperTurn(
 	if (hasZipperActed(combatant)) return { valid: false, reason: 'alreadyActed' };
 	if (getCombatantZipperSide(combatant) !== expectedSide) {
 		return { valid: false, reason: 'wrongSide' };
+	}
+	if (isHesitantBlocked(combat, combatantId)) {
+		return { valid: false, reason: 'hesitantBlocked' };
 	}
 	return { valid: true };
 }

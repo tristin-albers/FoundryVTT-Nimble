@@ -20,6 +20,7 @@ import {
 	isZipperInitiativeActive,
 } from '../../documents/combat/zipperTurnState.js';
 import { COMBAT_TRACKER_CLIENT_SETTING_UPDATED_EVENT_NAME } from '../../settings/combatTrackerSettings.js';
+import { getMinionGroupId } from '../../utils/minionGrouping.js';
 import {
 	canCurrentUserAdjustCombatantActions,
 	canCurrentUserRollInitiativeForCombatant,
@@ -441,6 +442,90 @@ export function createCtTopTrackerState() {
 
 	function isCombatTrackerContextMenuKey(event: KeyboardEvent): boolean {
 		return event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10');
+	}
+
+	type CombatWithTurnGroup = Combat & {
+		createPersistentTurnGroup?: (combatantIds: string[]) => Promise<void>;
+		removeFromTurnGroup?: (combatantId: string) => Promise<void>;
+	};
+
+	let turnGroupSelection = $state<Set<string>>(new Set());
+	let turnGroupSelectionActive = $state(false);
+
+	function startTurnGroupSelection(combatant: Combatant.Implementation): void {
+		if (!game.user?.isGM) return;
+		const combatantId = getCombatantId(combatant);
+		if (!combatantId) return;
+		turnGroupSelection = new Set([combatantId]);
+		turnGroupSelectionActive = true;
+	}
+
+	function toggleTurnGroupSelectionMember(combatant: Combatant.Implementation): void {
+		if (!turnGroupSelectionActive) return;
+		const combatantId = getCombatantId(combatant);
+		if (!combatantId) return;
+		const next = new Set(turnGroupSelection);
+		if (next.has(combatantId)) {
+			next.delete(combatantId);
+		} else {
+			next.add(combatantId);
+		}
+		turnGroupSelection = next;
+	}
+
+	async function confirmTurnGroupSelection(): Promise<void> {
+		if (!turnGroupSelectionActive || turnGroupSelection.size < 2) {
+			cancelTurnGroupSelection();
+			return;
+		}
+		const combat = trackerStore.currentCombat as CombatWithTurnGroup | null;
+		if (!combat || typeof combat.createPersistentTurnGroup !== 'function') {
+			cancelTurnGroupSelection();
+			return;
+		}
+		const ids = [...turnGroupSelection];
+		cancelTurnGroupSelection();
+		await combat.createPersistentTurnGroup(ids);
+	}
+
+	function cancelTurnGroupSelection(): void {
+		turnGroupSelection = new Set();
+		turnGroupSelectionActive = false;
+	}
+
+	async function handleUngroupCombatant(combatant: Combatant.Implementation): Promise<void> {
+		const combat = trackerStore.currentCombat as CombatWithTurnGroup | null;
+		if (!combat || !game.user?.isGM) return;
+		if (typeof combat.removeFromTurnGroup !== 'function') return;
+		const combatantId = getCombatantId(combatant);
+		if (!combatantId) return;
+		await combat.removeFromTurnGroup(combatantId);
+	}
+
+	function isCombatantInTurnGroup(combatant: Combatant.Implementation): boolean {
+		return Boolean(getMinionGroupId(combatant));
+	}
+
+	function handleCombatantCardMouseEnter(combatant: Combatant.Implementation): void {
+		if (!canvas?.ready) return;
+		const token = getCombatantToken(combatant);
+		if (!token) return;
+		const t = token as any;
+		if ('hover' in t) {
+			t.hover = true;
+			if (typeof t.refresh === 'function') t.refresh();
+		}
+	}
+
+	function handleCombatantCardMouseLeave(combatant: Combatant.Implementation): void {
+		if (!canvas?.ready) return;
+		const token = getCombatantToken(combatant);
+		if (!token) return;
+		const t = token as any;
+		if ('hover' in t) {
+			t.hover = false;
+			if (typeof t.refresh === 'function') t.refresh();
+		}
 	}
 
 	function handleCombatantCardClick(event: MouseEvent, combatant: Combatant.Implementation): void {
@@ -1609,5 +1694,19 @@ export function createCtTopTrackerState() {
 		},
 		handleZipperToggleActed,
 		handleZipperCardSelect,
+		handleCombatantCardMouseEnter,
+		handleCombatantCardMouseLeave,
+		get turnGroupSelectionActive() {
+			return turnGroupSelectionActive;
+		},
+		get turnGroupSelection() {
+			return turnGroupSelection;
+		},
+		startTurnGroupSelection,
+		toggleTurnGroupSelectionMember,
+		confirmTurnGroupSelection,
+		cancelTurnGroupSelection,
+		handleUngroupCombatant,
+		isCombatantInTurnGroup,
 	};
 }

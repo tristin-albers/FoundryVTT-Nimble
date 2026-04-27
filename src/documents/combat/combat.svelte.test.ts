@@ -2758,6 +2758,7 @@ describe('NimbleCombat', () => {
 				minionGroup: {
 					id: 'ncs-group-a',
 					role: 'leader',
+					temporary: true,
 				},
 			},
 		};
@@ -2766,6 +2767,7 @@ describe('NimbleCombat', () => {
 				minionGroup: {
 					id: 'ncs-group-a',
 					role: 'member',
+					temporary: true,
 				},
 			},
 		};
