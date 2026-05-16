@@ -6,6 +6,61 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.8.5] - 2026-05-13
+
+### Added
+
+- [#563] Class progression tab with editing workflow. @trevlar
+- [#680] End-to-end charge pool system with recovery mechanics. @Insax
+- [#742] Generalize meleeDamageBonus into damageBonus. @tristin-albers
+- [#749] Rework Last Stand to heal-and-tag mechanic. @Fronix
+- [#754] Auto-equip starting equipment items on character creation. @trevlar
+- [#755] Equip toggle button with contextual icons and tooltip. @trevlar
+
+### Fixed
+
+- [#753] Deduplicate world-item spells against compendium source in spell index. @trevlar
+- [#756] End turn QoL, action tracker visibility, and combatant init. @trevlar
+- [#757] Opportunity attack deducts 1 action, detect scene-agnostic combats. @trevlar
+- [#761] Remove long-cast spells from heroic action panel and show class features in attack panel. @trevlar
+- [#762] Skip end-turn confirmation for monsters and NPCs. @trevlar
+- [#763] Prevent runaway round counter with legendary turn expansion. @Fronix
+
+---
+
+
+## [0.8.4] - 2026-04-29
+
+### Added
+
+- [#703] ApplyCondition rule type with event-time dispatch. @fronix
+- [#709] Support multiple selections per group for class features. @trevlar
+- [#714] Decouple explosionStyle from canCrit. @fronix
+- [#715] Die modifier vocabulary (c/cv/v/n). @fronix
+- [#716] critCount, brutalPrimary, and primaryDieValue dice API. @fronix
+- [#730] Search features, inventory, and spells by description text. @tristin-albers
+- [#731] Wire flunky tag to suppress critical hits. @tristin-albers
+- [#732] Decrement action tracker from all tabs on item activation. @tristin-albers
+- [#733] Temporary bonus action slots in the action tracker. @tristin-albers
+- [#737] Group class features with collapsible cards and level badges. @trevlar
+- [#740] Automation rules for seven features across six classes. @fronix
+- [#743] ConditionImmunity rule type. @tristin-albers
+
+### Fixed
+
+- [#713] Fix dice engine correctness gaps. @fronix
+- [#728] Apply savingThrowRollMode rules during character creation. @trevlar
+- [#734] Unblock and confirm reactions on PC turn and macro bar. @trevlar
+
+### Changed
+
+- [#727] Fix Songweaver spell school and fire in my bones spell. @trevlar
+- [#738] Restrict Lifebinding Spirit spell to Shepherd subclass. @trevlar
+- [#740] Add automation rules to compendium features across six classes. @fronix
+
+---
+
+
 ## [0.8.3] - 2026-04-16
 
 ### Fixed

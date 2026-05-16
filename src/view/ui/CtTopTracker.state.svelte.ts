@@ -13,6 +13,7 @@ import {
 import type { HeroicReactionKey } from '#utils/heroicActions.js';
 import { isCombatantDead } from '#utils/isCombatantDead.js';
 import { isCombatStarted } from '#utils/isCombatStarted.js';
+import localize from '#utils/localize.js';
 import { queueCombatantMutationWithFreshDocument } from '#utils/queueCombatantMutationWithFreshDocument.js';
 import CtSettingsDialogComponent from '#view/dialogs/CtSettingsDialog.svelte';
 import {
@@ -269,10 +270,49 @@ export function createCtTopTrackerState() {
 		return result === 'yes' || (result as unknown) === true;
 	}
 
+	async function confirmEndTurnEarly(): Promise<boolean> {
+		const dialogApi = foundry.applications?.api?.DialogV2;
+		const title = localize('NIMBLE.ui.heroicActions.confirmEndTurnEarlyTitle');
+		const prompt = localize('NIMBLE.ui.heroicActions.confirmEndTurnEarlyBody');
+
+		if (!dialogApi?.wait) {
+			return globalThis.confirm(prompt);
+		}
+
+		const result = await dialogApi.wait({
+			window: { title },
+			content: `<p>${prompt}</p>`,
+			modal: true,
+			rejectClose: false,
+			buttons: [
+				{
+					action: 'no',
+					icon: 'fa-solid fa-xmark',
+					label: localize('No'),
+				},
+				{
+					action: 'yes',
+					icon: 'fa-solid fa-check',
+					label: localize('Yes'),
+					default: true,
+				},
+			],
+		});
+
+		return result === 'yes' || (result as unknown) === true;
+	}
+
 	async function handleEndTurnFromCard(event: MouseEvent): Promise<void> {
 		event.preventDefault();
 		event.stopPropagation();
 		if (!canCurrentUserEndTurn) return;
+
+		const activeCombatant = trackerStore.activeCombatant;
+		if (!activeAllActionsUsed && activeCombatant && isPlayerCombatant(activeCombatant)) {
+			const confirmed = await confirmEndTurnEarly();
+			if (!confirmed) return;
+		}
+
 		const actionCombat = resolveActionCombat();
 		if (!actionCombat) return;
 		const advanced = await requestAdvanceCombatTurn({ combat: actionCombat });
@@ -1355,6 +1395,14 @@ export function createCtTopTrackerState() {
 	const orderedAliveEntries = $derived(trackerStore.orderedAliveEntries);
 	const activeEntryKey = $derived(trackerStore.activeEntryKey);
 	const canCurrentUserEndTurn = $derived(trackerStore.canCurrentUserEndTurn);
+	const activeAllActionsUsed = $derived.by(() => {
+		// trackDependency on renderVersion forces re-evaluation when any combatant update fires,
+		// because Foundry mutates combatant documents in-place (same object reference).
+		trackDependency(trackerStore.renderVersion);
+		const activeCombatant = trackerStore.activeCombatant;
+		if (!activeCombatant) return false;
+		return getCombatantCurrentActions(activeCombatant) === 0;
+	});
 	const shouldVirtualizeAliveEntries = $derived(
 		orderedAliveEntries.length >= CT_VIRTUALIZATION_ENTRY_THRESHOLD,
 	);
@@ -1616,6 +1664,9 @@ export function createCtTopTrackerState() {
 		},
 		get canCurrentUserEndTurn() {
 			return canCurrentUserEndTurn;
+		},
+		get activeAllActionsUsed() {
+			return activeAllActionsUsed;
 		},
 		get virtualizedAliveEntries() {
 			return virtualizedAliveEntries;

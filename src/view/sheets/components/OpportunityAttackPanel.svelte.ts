@@ -28,6 +28,7 @@ export function createOpportunityAttackPanelState(
 	getReactionDisabled: () => boolean,
 	getOpportunitySpent: () => boolean,
 	getNoActions: () => boolean,
+	getIsActiveTurn: () => boolean,
 	getOnUseReaction: () => (options?: { force?: boolean }) => Promise<boolean>,
 	getForceNextReactionUse: () => boolean,
 	getOnConsumeForcedReactionUse: () => () => void,
@@ -127,6 +128,7 @@ export function createOpportunityAttackPanelState(
 		if (isDisabled) {
 			const opportunitySpent = getOpportunitySpent();
 			const noActions = getNoActions();
+			const isActiveTurn = getIsActiveTurn();
 			const reactionName = localize('NIMBLE.ui.heroicActions.reactions.opportunity.label');
 
 			const confirmed = await showReactionConfirmation({
@@ -134,6 +136,7 @@ export function createOpportunityAttackPanelState(
 				spentReactionNames: reactionName,
 				noActions,
 				hasSpentReactions: opportunitySpent,
+				isActiveTurn,
 			});
 			return { confirmed, force: true };
 		}
@@ -280,11 +283,14 @@ export function createOpportunityAttackPanelState(
 		if (!confirmed) return null;
 
 		const item = getActor().items.get(itemId);
-		const result = await getActor().activateItem(itemId, { rollMode: -1 }); // Disadvantage
+		const result = await getActor().activateItem(itemId, {
+			rollMode: -1,
+			skipActionDeduction: true,
+		});
 
 		if (result && item) {
-			// Item activation owns its own dialog flow, so consume the reaction only after success.
-			const reactionUsed = await getOnUseReaction()(force ? { force: true } : undefined);
+			const reactionOptions = force ? { force: true } : undefined;
+			const reactionUsed = await getOnUseReaction()(reactionOptions);
 			if (!reactionUsed) return null;
 
 			if (force) {

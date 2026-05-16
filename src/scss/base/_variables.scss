@@ -97,6 +97,7 @@
 
 	// Use Foundry's background color to match system dialogs
 	--nimble-sheet-background: var(--color-bg, hsl(40, 20%, 94%));
+	--nimble-card-background-color: hsl(48, 17%, 97%);
 	--nimble-card-border-color: hsla(41, 18%, 54%, 25%);
 	--nimble-card-box-shadow: hsla(0, 0%, 0%, 0.24) 0 3px 8px;
 
@@ -142,6 +143,8 @@
 	--nimble-action-info-text-color: hsl(45, 70%, 28%);
 	--nimble-action-info-icon-color: hsl(45, 80%, 35%);
 	--nimble-action-button-icon-color: hsl(210, 65%, 45%);
+	--nimble-additional-action-color: hsl(210, 60%, 50%);
+	--nimble-additional-action-color-hover: hsl(210, 60%, 60%);
 
 	/** REACTION COLORS **/
 	// Defend (blue)
@@ -192,6 +195,14 @@
 	--nimble-chat-advantage-background: hsla(210, 70%, 50%, 0.15);
 	--nimble-chat-advantage-color: hsl(210, 70%, 40%);
 	--nimble-chat-advantage-border-color: hsla(210, 70%, 50%, 0.3);
+
+	/** CLASS PROGRESSION BADGE COLORS **/
+	--nimble-badge-primary-bg: hsl(120, 55%, 22%);
+	--nimble-badge-secondary-bg: hsl(210, 35%, 25%);
+	--nimble-badge-capstone-bg: hsl(38, 100%, 25%);
+	--nimble-badge-subclass-bg: hsl(276, 30%, 33%);
+	--nimble-badge-world-bg: hsl(35, 80%, 22%);
+	--nimble-badge-pack-bg: hsl(195, 55%, 22%);
 
 	/** ANIMATION **/
 	--nimble-standard-transition: all 0.15s ease-in-out;

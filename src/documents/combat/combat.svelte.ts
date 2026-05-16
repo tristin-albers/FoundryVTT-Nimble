@@ -1,7 +1,10 @@
 import { createSubscriber } from 'svelte/reactivity';
 import type { ActorRollOptions } from '#documents/actor/actorInterfaces.ts';
 import type { NimbleCombatant } from '#documents/combatant/combatant.svelte.js';
-import { getHeroicReactionUsageState } from '#utils/getHeroicReactionUsageState.js';
+import {
+	getHeroicReactionUsageState,
+	isSoftBlockedReason,
+} from '#utils/getHeroicReactionUsageState.js';
 import {
 	canOwnerUseHeroicReaction,
 	getHeroicReactionAvailability,
@@ -643,10 +646,6 @@ class NimbleCombat extends Combat {
 			normalizedEntry.type = 'npc';
 		}
 
-		if (normalizedEntry.type === 'character') {
-			return { normalizedEntry, normalizedMinionType };
-		}
-
 		const currentActions = foundry.utils.getProperty(
 			normalizedEntry,
 			'system.actions.base.current',
@@ -658,9 +657,10 @@ class NimbleCombat extends Combat {
 		const explicitMaxActions = Number(
 			foundry.utils.getProperty(normalizedEntry, 'system.actions.base.max') ?? Number.NaN,
 		);
+		const defaultActions = normalizedEntry.type === 'character' ? 3 : 1;
 		const initialActions = Number.isFinite(explicitMaxActions)
 			? Math.max(0, Math.trunc(explicitMaxActions))
-			: 1;
+			: defaultActions;
 		foundry.utils.setProperty(normalizedEntry, 'system.actions.base.current', initialActions);
 		return { normalizedEntry, normalizedMinionType };
 	}
@@ -873,6 +873,9 @@ class NimbleCombat extends Combat {
 	}
 
 	override async _onEndTurn(combatant: Combatant.Implementation, context: Combat.TurnEventContext) {
+		// @ts-expect-error Custom hook
+		Hooks.call('nimbleCombatTurnEnd', combatant);
+
 		await super._onEndTurn(combatant, context);
 
 		if (combatant.type === 'character') {
@@ -937,10 +940,11 @@ class NimbleCombat extends Combat {
 					});
 
 					const canForceUsage =
-						options?.force === true &&
-						(usageState.blockedReason === 'noActions' || usageState.blockedReason === 'spent');
+						options?.force === true && isSoftBlockedReason(usageState.blockedReason);
 
-					if (!usageState.canUse && !canForceUsage) return false;
+					if (!usageState.canUse && !canForceUsage) {
+						return false;
+					}
 
 					const reactionAvailabilityUpdate = {
 						_id: combatantId,
@@ -1279,7 +1283,13 @@ class NimbleCombat extends Combat {
 	}
 
 	override setupTurns(): Combatant.Implementation[] {
+		// super.setupTurns() does `this.round++` when this.turn exceeds combatants.size, which fires
+		// spuriously once expandLegendaryTurns produces a turn list longer than the combatant count.
+		const savedRound = this.round;
+		const savedTurn = this.turn;
 		const aliveTurns = super.setupTurns().filter((combatant) => !isCombatantDead(combatant));
+		if (this.round !== savedRound) this.round = savedRound;
+		if (this.turn !== savedTurn) this.turn = savedTurn;
 		const minionNormalizedTurns = normalizeMinionTurns(aliveTurns);
 		const expandedTurns = expandLegendaryTurns(minionNormalizedTurns);
 

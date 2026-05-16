@@ -1,5 +1,6 @@
 import type { DeepPartial } from 'fvtt-types/utils';
 import type { NimbleFeatureItem } from '#documents/item/feature.js';
+import type { NimbleObjectItem } from '#documents/item/object.js';
 import { SvelteApplicationMixin } from '#lib/SvelteApplicationMixin.svelte.js';
 import { buildSpellIndex, type SpellIndex } from '#utils/getSpells.js';
 import { getSpellsFromIndex } from '#utils/getSpellsFromIndex.js';
@@ -185,7 +186,7 @@ export default class CharacterCreationDialog extends SvelteApplicationMixin(Appl
 		};
 		classFeatures?: {
 			autoGrant: string[];
-			selected: Map<string, NimbleFeatureItem>;
+			selected: Map<string, NimbleFeatureItem[]>;
 		};
 		spells?: {
 			autoGrant: string[];
@@ -324,6 +325,14 @@ export default class CharacterCreationDialog extends SvelteApplicationMixin(Appl
 		// If gold was chosen, grantItem rules were disabled above so no items are granted
 		await actor?.createEmbeddedDocuments('Item', originDocumentSources);
 
+		// Auto-equip all object items granted as starting equipment
+		if (startingEquipmentChoice === 'equipment' && actor) {
+			const objectItems = actor.items.filter((i) => i.type === 'object');
+			for (const item of objectItems) {
+				await (item as unknown as NimbleObjectItem).toggleEquipment();
+			}
+		}
+
 		// Create class feature documents
 		const featureDocumentSources: Item.CreateData[] = [];
 
@@ -337,11 +346,13 @@ export default class CharacterCreationDialog extends SvelteApplicationMixin(Appl
 			}
 		}
 
-		// Add selected features
-		for (const [_group, feature] of results.classFeatures?.selected ?? []) {
-			const source = feature.toObject();
-			source._stats.compendiumSource = feature.uuid;
-			featureDocumentSources.push(source as object as Item.CreateData);
+		// Add selected features — each group can contribute multiple picks
+		for (const [_group, features] of results.classFeatures?.selected ?? []) {
+			for (const feature of features) {
+				const source = feature.toObject();
+				source._stats.compendiumSource = feature.uuid;
+				featureDocumentSources.push(source as object as Item.CreateData);
+			}
 		}
 
 		// Create all features

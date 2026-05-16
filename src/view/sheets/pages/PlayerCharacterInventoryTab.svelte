@@ -1,21 +1,22 @@
 <script lang="ts">
-	import type { NimbleCharacter } from '../../../documents/actor/character.js';
-	import type PlayerCharacterSheet from '../../../documents/sheets/PlayerCharacterSheet.svelte.js';
-	import { getContext } from 'svelte';
-	import { SvelteMap } from 'svelte/reactivity';
-	import { RulesManager } from '../../../managers/RulesManager.js';
-	import localize from '../../../utils/localize.js';
-	import shouldFlashDroppedItem from '../../../utils/shouldFlashDroppedItem.js';
-	import sortItems from '../../../utils/sortItems.js';
-	import prepareObjectTooltip from '../../dataPreparationHelpers/documentTooltips/prepareObjectTooltip.js';
-	import filterItems from '../../dataPreparationHelpers/filterItems.js';
+	import type { NimbleCharacter } from '#documents/actor/character.js';
+	import type PlayerCharacterSheet from '#documents/sheets/PlayerCharacterSheet.svelte.js';
+	import { RulesManager } from '#managers/RulesManager.js';
+	import localize from '#utils/localize.js';
+	import { getPools, getPoolsForItem } from '#utils/chargePool/chargePoolSync.js';
+	import shouldFlashDroppedItem from '#utils/shouldFlashDroppedItem.js';
+	import sortItems from '#utils/sortItems.js';
+	import ChargeIndicator from '#view/components/ChargeIndicator.svelte';
+	import filterItems from '#view/dataPreparationHelpers/filterItems.js';
+	import prepareObjectTooltip from '#view/dataPreparationHelpers/documentTooltips/prepareObjectTooltip.js';
+	import SearchBar from '#view/sheets/components/SearchBar.svelte';
 	import {
 		DROP_ITEM_FLASH_ANIMATION_NAME,
 		getDroppedItemFlashIds,
 		type SheetDropItemFlashState,
-	} from '../dropItemFlashState.js';
-
-	import SearchBar from '../components/SearchBar.svelte';
+	} from '#view/sheets/dropItemFlashState.js';
+	import { getContext } from 'svelte';
+	import { SvelteMap } from 'svelte/reactivity';
 
 	type InventorySortableItem = {
 		_id: string;
@@ -125,6 +126,13 @@
 	let categorizedItems = $derived(groupItemsByType(items));
 
 	let itemRulesManagers = new SvelteMap();
+
+	// All charge pools for the actor
+	let allPools = $derived(getPools(actor.reactive));
+
+	function getItemPools(itemId: string) {
+		return getPoolsForItem(actor.reactive, itemId, allPools);
+	}
 
 	$effect(() => {
 		// Rebuild the maps when items change
@@ -249,6 +257,14 @@
 								{item.reactive.name}
 							</h4>
 
+							<div class="nimble-document-card__charges">
+								<ChargeIndicator
+									pools={getItemPools(item.reactive._id)}
+									{actor}
+									itemId={item.reactive._id}
+								/>
+							</div>
+
 							{#if rules && (item.reactive.system.rules?.length ?? 0) > 0}
 								<button
 									class="nimble-button"
@@ -257,6 +273,9 @@
 									aria-label={localize('NIMBLE.prompts.toggleEquipment', {
 										name: item.reactive.name,
 									})}
+									data-tooltip={item.reactive.system.equipped
+										? localize('NIMBLE.prompts.equippedTooltip')
+										: localize('NIMBLE.prompts.unequippedTooltip')}
 									onclick={async (event) => {
 										event.stopPropagation();
 										const newEquippedState = !item.reactive.system.equipped;
@@ -279,10 +298,16 @@
 										}
 									}}
 								>
-									{#if item.reactive.system.equipped}
-										<i class="fa-solid fa-circle"></i>
+									{#if ['armor', 'shield'].includes(item.reactive.system.objectType)}
+										{#if item.reactive.system.equipped}
+											<i class="fa-solid fa-shield"></i>
+										{:else}
+											<i class="fa-regular fa-shield"></i>
+										{/if}
+									{:else if item.reactive.system.equipped}
+										<i class="fa-solid fa-hand"></i>
 									{:else}
-										<i class="fa-regular fa-circle"></i>
+										<i class="fa-regular fa-hand"></i>
 									{/if}
 								</button>
 							{:else}

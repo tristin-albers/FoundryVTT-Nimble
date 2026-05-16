@@ -147,7 +147,8 @@ export function createHeroicActionsTabState(getActor: () => NimbleCharacter) {
 	function getCombatant(): Combatant | null {
 		const combat = getCombat();
 		if (!combat) return null;
-		return combat.combatants.find((entry) => entry.actorId === getActor().id) ?? null;
+		const actorId = getActor().id;
+		return combat.combatants.find((entry) => entry.actorId === actorId) ?? null;
 	}
 
 	function isInActiveCombat(): boolean {
@@ -269,6 +270,12 @@ export function createHeroicActionsTabState(getActor: () => NimbleCharacter) {
 		return getReactionUsageState(reaction).canUse;
 	}
 
+	function isReactionActiveTurnBlocked(reactionKey: HeroicReactionKey): boolean {
+		const reaction = HEROIC_REACTIONS.find((entry) => entry.reactionKey === reactionKey);
+		if (!reaction) return false;
+		return getReactionUsageState(reaction).isActiveTurn;
+	}
+
 	async function useReaction(
 		reactionKey: HeroicReactionKey,
 		options?: { force?: boolean },
@@ -300,7 +307,13 @@ export function createHeroicActionsTabState(getActor: () => NimbleCharacter) {
 	// Spell Data (for hasSpells check)
 	// ============================================================================
 
-	const allSpells = $derived(filterItems(getActor().reactive, ['spell'], ''));
+	const allSpells = $derived(
+		filterItems(getActor().reactive, ['spell'], '').filter((spell) => {
+			const costType = (spell.system as unknown as { activation?: { cost?: { type?: string } } })
+				.activation?.cost?.type;
+			return costType !== 'minute' && costType !== 'hour';
+		}),
+	);
 	const hasSpells = $derived(allSpells.length > 0);
 
 	// ============================================================================
@@ -384,6 +397,9 @@ export function createHeroicActionsTabState(getActor: () => NimbleCharacter) {
 		get canUseInterposeAndDefendCombo() {
 			return interposeAndDefendUsageState.canUse;
 		},
+		get interposeAndDefendActiveTurnBlocked() {
+			return interposeAndDefendUsageState.isActiveTurn;
+		},
 		get hasSpells() {
 			return hasSpells;
 		},
@@ -393,6 +409,7 @@ export function createHeroicActionsTabState(getActor: () => NimbleCharacter) {
 		HEROIC_ACTIONS,
 		HEROIC_REACTIONS,
 		canUseReaction,
+		isReactionActiveTurnBlocked,
 		deductActionPips,
 		handleActionClick,
 		handleReactionClick,

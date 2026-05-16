@@ -8,6 +8,7 @@ export function createHelpPanelState(
 	getReactionDisabled: () => boolean,
 	getHelpSpent: () => boolean,
 	getNoActions: () => boolean,
+	getIsActiveTurn: () => boolean,
 	getOnUseReaction: () => (options?: { force?: boolean }) => Promise<boolean>,
 ) {
 	// Targeting state
@@ -34,6 +35,7 @@ export function createHelpPanelState(
 		if (isDisabled) {
 			const helpSpent = getHelpSpent();
 			const noActions = getNoActions();
+			const isActiveTurn = getIsActiveTurn();
 			const reactionName = localize('NIMBLE.ui.heroicActions.reactions.help.label');
 
 			const confirmed = await showReactionConfirmation({
@@ -41,6 +43,7 @@ export function createHelpPanelState(
 				spentReactionNames: reactionName,
 				noActions,
 				hasSpentReactions: helpSpent,
+				isActiveTurn,
 			});
 			if (!confirmed) return;
 

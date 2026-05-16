@@ -1,8 +1,15 @@
 import { handleAutomaticConditionApplication } from './hooks/automaticConditions.js';
 import canvasInit from './hooks/canvasInit.js';
+import { registerBloodiedTriggerHooks } from './hooks/chargePoolTriggers/bloodiedTrigger.js';
+import { registerKillTriggerHooks } from './hooks/chargePoolTriggers/killTrigger.js';
+import { registerTurnTriggerHooks } from './hooks/chargePoolTriggers/turnTrigger.js';
+import { registerWoundTriggerHooks } from './hooks/chargePoolTriggers/woundTrigger.js';
+import registerChargeSystemHooks from './hooks/chargeSystem.js';
 import registerCombatantDefeatSync from './hooks/combatantHooks/combatantDefeatSync.js';
 import registerCombatantHealthStateSync from './hooks/combatantHooks/combatantHealthStateSync.js';
 import registerTokenCombatantSync from './hooks/combatantHooks/tokenCombatantSync.js';
+import { conditionImmunityGuard } from './hooks/conditionImmunityGuard.js';
+import registerDicePoolSystemHooks from './hooks/dicePoolSystem.js';
 import { hotbarDrop as onHotbarDrop } from './hooks/hotBarDrop.js';
 import i18nInit from './hooks/i18nInit.js';
 import init from './hooks/init.js';
@@ -16,8 +23,8 @@ import registerRuleEventDispatch from './hooks/ruleEventDispatch.js';
 import setup from './hooks/setup.js';
 import registerZipperTokenOverlay from './hooks/zipperTokenOverlay.js';
 import './scss/main.scss';
-import { getCombatManaGrantForCombat, getCombatManaGrantMap } from './utils/combatManaRules.js';
-import { injectViteHmrClient } from './utils/viteHmr.js';
+import { getCombatManaGrantForCombat, getCombatManaGrantMap } from '#utils/combatManaRules.js';
+import { injectViteHmrClient } from '#utils/viteHmr.js';
 
 async function clearCombatManaFromCombat(combat: Combat): Promise<void> {
 	const combatId = combat.id;
@@ -87,9 +94,21 @@ type HookFn = (...args: object[]) => undefined | boolean | Promise<undefined | b
 	handleAutomaticConditionApplication.postDelete as object as HookFn,
 );
 
+// Condition immunity — block protected conditions before application
+(Hooks.on as (event: string, fn: HookFn) => number)(
+	'nimble.preApplyCondition',
+	conditionImmunityGuard as object as HookFn,
+);
+
 Hooks.on('hotbarDrop', onHotbarDrop);
 registerCombatantDefeatSync();
 registerCombatantHealthStateSync();
+registerChargeSystemHooks();
+registerDicePoolSystemHooks();
+registerWoundTriggerHooks();
+registerTurnTriggerHooks();
+registerKillTriggerHooks();
+registerBloodiedTriggerHooks();
 registerMinionGroupTokenBadges();
 registerMinionGroupTokenActions();
 registerZipperTokenOverlay();
