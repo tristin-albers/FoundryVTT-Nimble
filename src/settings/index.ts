@@ -1,5 +1,6 @@
 import type { Component } from 'svelte';
 import GenericDialog from '#documents/dialogs/GenericDialog.svelte.js';
+import { SYSTEM_ID } from '#system';
 import DiceTestbench from '#view/debug/DiceTestbench.svelte';
 import { MigrationRunnerBase } from '../migration/MigrationRunnerBase.js';
 import { registerAdjacencySettings } from './adjacencySettings.js';
@@ -34,15 +35,15 @@ function rerenderSettingsConfigIfOpen(): void {
 
 export function isDebugModeEnabled(): boolean {
 	const settings = game.settings?.settings as { has: (key: string) => boolean } | undefined;
-	if (!settings?.has(`nimble.${DEBUG_MODE_SETTING_KEY}`)) return false;
-	return Boolean(game.settings.get('nimble' as 'core', DEBUG_MODE_SETTING_KEY as 'rollMode'));
+	if (!settings?.has(`${SYSTEM_ID}.${DEBUG_MODE_SETTING_KEY}`)) return false;
+	return Boolean(game.settings.get(SYSTEM_ID as 'core', DEBUG_MODE_SETTING_KEY as 'rollMode'));
 }
 
 export const settings = [];
 
 export default function registerSystemSettings() {
 	game.settings.register(
-		'nimble' as 'core',
+		SYSTEM_ID as 'core',
 		'autoExpandRolls' as 'rollMode',
 		{
 			name: 'NIMBLE.settings.autoExpandRolls.name',
@@ -55,7 +56,7 @@ export default function registerSystemSettings() {
 	);
 
 	game.settings.register(
-		'nimble' as 'core',
+		SYSTEM_ID as 'core',
 		'hideRolls' as 'rollMode',
 		{
 			name: 'NIMBLE.hints.hideRollsFromPlayersByDefault',
@@ -68,7 +69,7 @@ export default function registerSystemSettings() {
 	);
 
 	game.settings.register(
-		'nimble' as 'core',
+		SYSTEM_ID as 'core',
 		AUTO_ADD_CHARACTER_TO_COMBAT_ON_INITIATIVE_ROLL_SETTING_KEY as 'rollMode',
 		{
 			name: 'NIMBLE.settings.autoAddCharacterToCombatOnInitiativeRoll.name',
@@ -83,7 +84,7 @@ export default function registerSystemSettings() {
 	registerAdjacencySettings();
 
 	game.settings.register(
-		'nimble' as 'core',
+		SYSTEM_ID as 'core',
 		'automation.autoApplyConditions' as 'rollMode',
 		{
 			name: 'NIMBLE.settings.autoApplyConditions.name',
@@ -101,7 +102,7 @@ export default function registerSystemSettings() {
 	registerNcswSettings();
 
 	game.settings.register(
-		'nimble' as 'core',
+		SYSTEM_ID as 'core',
 		DEBUG_MODE_SETTING_KEY as 'rollMode',
 		{
 			name: 'NIMBLE.settings.debugMode.name',
@@ -117,7 +118,7 @@ export default function registerSystemSettings() {
 	);
 
 	game.settings.register(
-		'nimble' as 'core',
+		SYSTEM_ID as 'core',
 		'worldSchemaVersion' as 'rollMode',
 		{
 			name: 'World Schema Version',

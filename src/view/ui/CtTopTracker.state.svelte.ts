@@ -15,6 +15,7 @@ import { isCombatantDead } from '#utils/isCombatantDead.js';
 import { isCombatStarted } from '#utils/isCombatStarted.js';
 import localize from '#utils/localize.js';
 import { queueCombatantMutationWithFreshDocument } from '#utils/queueCombatantMutationWithFreshDocument.js';
+import { tokenGroupHoverIn, tokenHoverIn, tokenHoverOut } from '#utils/tokenHoverHighlight.js';
 import CtSettingsDialogComponent from '#view/dialogs/CtSettingsDialog.svelte';
 import {
 	hasZipperActed,
@@ -546,28 +547,6 @@ export function createCtTopTrackerState() {
 		return Boolean(getMinionGroupId(combatant));
 	}
 
-	function handleCombatantCardMouseEnter(combatant: Combatant.Implementation): void {
-		if (!canvas?.ready) return;
-		const token = getCombatantToken(combatant);
-		if (!token) return;
-		const t = token as any;
-		if ('hover' in t) {
-			t.hover = true;
-			if (typeof t.refresh === 'function') t.refresh();
-		}
-	}
-
-	function handleCombatantCardMouseLeave(combatant: Combatant.Implementation): void {
-		if (!canvas?.ready) return;
-		const token = getCombatantToken(combatant);
-		if (!token) return;
-		const t = token as any;
-		if ('hover' in t) {
-			t.hover = false;
-			if (typeof t.refresh === 'function') t.refresh();
-		}
-	}
-
 	function handleCombatantCardClick(event: MouseEvent, combatant: Combatant.Implementation): void {
 		event.preventDefault();
 		event.stopPropagation();
@@ -623,6 +602,33 @@ export function createCtTopTrackerState() {
 		event.preventDefault();
 		event.stopPropagation();
 		void pingCombatantToken(combatant);
+	}
+
+	function handleCombatantCardMouseEnter(
+		_event: MouseEvent,
+		combatant: Combatant.Implementation,
+	): void {
+		if (!canvas?.ready) return;
+		tokenHoverIn(getCombatantToken(combatant));
+	}
+
+	function handleCombatantCardMouseLeave(
+		_event: MouseEvent,
+		combatant: Combatant.Implementation,
+	): void {
+		if (!canvas?.ready) return;
+		tokenHoverOut(getCombatantToken(combatant));
+	}
+
+	function handleMonsterStackMouseEnter(_event: MouseEvent, entry: MonsterStackTrackEntry): void {
+		if (!canvas?.ready) return;
+		const tokens = entry.combatants.map(getCombatantToken).filter((t) => t !== null);
+		tokenGroupHoverIn(tokens);
+	}
+
+	function handleMonsterStackMouseLeave(_event: MouseEvent, _entry: MonsterStackTrackEntry): void {
+		if (!canvas?.ready) return;
+		tokenHoverOut(null);
 	}
 
 	function canRemoveCombatant(): boolean {
@@ -1713,11 +1719,15 @@ export function createCtTopTrackerState() {
 		handleCombatantCardClick,
 		handleCombatantCardContextMenu,
 		handleCombatantCardKeyDown,
+		handleCombatantCardMouseEnter,
+		handleCombatantCardMouseLeave,
 		canRemoveCombatant,
 		handleRemoveCombatant,
 		handleMonsterStackClick,
 		handleMonsterStackContextMenu,
 		handleMonsterStackKeyDown,
+		handleMonsterStackMouseEnter,
+		handleMonsterStackMouseLeave,
 		handleTrackDragOver,
 		handleTrackDrop,
 		handleTrackScroll,
@@ -1745,8 +1755,6 @@ export function createCtTopTrackerState() {
 		},
 		handleZipperToggleActed,
 		handleZipperCardSelect,
-		handleCombatantCardMouseEnter,
-		handleCombatantCardMouseLeave,
 		get turnGroupSelectionActive() {
 			return turnGroupSelectionActive;
 		},
