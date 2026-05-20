@@ -23,6 +23,7 @@ import renderCompendium from './hooks/renderCompendium.js';
 import renderNimbleTokenHUD from './hooks/renderNimbleTokenHUD.js';
 import registerRuleEventDispatch from './hooks/ruleEventDispatch.js';
 import setup from './hooks/setup.js';
+import registerZipperTokenOverlay from './hooks/zipperTokenOverlay.js';
 import { runDevFlagRebrandPreInit } from './migration/devFlagRebrand.js';
 import './scss/main.scss';
 import { SYSTEM_ID } from '#system';
@@ -120,6 +121,7 @@ registerInitiativeTriggerHooks();
 registerAttackedTriggerHooks();
 registerMinionGroupTokenBadges();
 registerMinionGroupTokenActions();
+registerZipperTokenOverlay();
 registerTokenCombatantSync();
 registerRuleEventDispatch();
 

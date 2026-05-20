@@ -4,7 +4,7 @@ import {
 	getCombatantPipActiveStates,
 	getCombatantPipTypes,
 } from '../../../documents/combat/combatantSystem.js';
-import { isCombatReadinessEnabled } from '../../../settings/combatReadinessSettings.js';
+import { isBaneInspiredActionsEnabled } from '../../../settings/combatReadinessSettings.js';
 import localize from '../../../utils/localize.js';
 import showReactionConfirmation from '../../../utils/showReactionConfirmation.js';
 import { getTargetedTokens, getTargetName } from '../../../utils/targeting.js';
@@ -41,7 +41,7 @@ export function createDefendPanelState(options: ReactionPanelStateOptions) {
 	});
 
 	function getNextConsumedActionType(): 'standard' | 'bane' | 'inspired' {
-		if (!isCombatReadinessEnabled()) return 'standard';
+		if (!isBaneInspiredActionsEnabled()) return 'standard';
 
 		const combat = game.combat;
 		if (!combat?.started) return 'standard';

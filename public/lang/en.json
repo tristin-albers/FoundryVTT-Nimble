@@ -2067,6 +2067,10 @@
 				"name": "Combat Readiness (Variant Rule)",
 				"hint": "Enables the Combat Readiness variant initiative. Heroes roll initiative to determine readiness: Vigilant (20+) grants Inspired actions, Ready (10-19) grants Standard actions, and Hesitant (1-9) grants Bane actions."
 			},
+			"baneInspiredActions": {
+				"name": "Use Bane and Inspired Actions",
+				"hint": "Requires Combat Readiness. When enabled, initiative determines action types: Vigilant (20+) grants Inspired pips, Hesitant (1-9) grants Bane pips with the hesitant condition. When disabled, Combat Readiness uses zipper initiative with standard action counts (1-3 based on roll)."
+			},
 			"debugMode": {
 				"name": "Debug Mode",
 				"hint": "Enables developer tools like the dice testbench. Changes take effect immediately.",

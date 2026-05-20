@@ -1,4 +1,8 @@
-import { isCombatReadinessEnabled } from '../../settings/combatReadinessSettings.js';
+import { SYSTEM_ID } from '#system';
+import {
+	isBaneInspiredActionsEnabled,
+	isCombatReadinessEnabled,
+} from '../../settings/combatReadinessSettings.js';
 import { isCombatantDead } from '../../utils/isCombatantDead.js';
 import {
 	getEffectiveMinionGroupLeader,
@@ -12,7 +16,7 @@ import {
 
 export type ZipperSide = 'player' | 'gm';
 
-const ZIPPER_FLAG_ROOT = 'flags.nimble.zipper';
+const ZIPPER_FLAG_ROOT = `flags.${SYSTEM_ID}.zipper`;
 const ZIPPER_CURRENT_SIDE_PATH = `${ZIPPER_FLAG_ROOT}.currentSide`;
 const ZIPPER_ROUND_START_SIDE_PATH = `${ZIPPER_FLAG_ROOT}.roundStartSide`;
 const ZIPPER_AWAITING_SELECTION_PATH = `${ZIPPER_FLAG_ROOT}.awaitingSelection`;
@@ -297,6 +301,7 @@ export function isHesitantCombatant(combatant: Combatant.Implementation): boolea
  * on the player side remain unacted. Only applies to player-side combatants.
  */
 export function isHesitantBlocked(combat: Combat, combatantId: string): boolean {
+	if (!isBaneInspiredActionsEnabled()) return false;
 	const combatant = combat.combatants.get(combatantId);
 	if (!combatant) return false;
 	if (getCombatantZipperSide(combatant) !== 'player') return false;

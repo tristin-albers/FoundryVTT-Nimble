@@ -3,7 +3,7 @@ import {
 	getPipTypesForReadiness,
 	getReadinessTierFromRoll,
 } from '../../combat/actionType.js';
-import { isCombatReadinessEnabled } from '../../settings/combatReadinessSettings.js';
+import { isBaneInspiredActionsEnabled } from '../../settings/combatReadinessSettings.js';
 import type { InitiativeRollOutcome } from './combatTypes.js';
 import { handleInitiativeRules } from './handleInitiativeRules.js';
 
@@ -55,7 +55,7 @@ export function applyCharacterInitiativeActionUpdate(
 ): void {
 	if (combatant.type !== 'character') return;
 
-	if (isCombatReadinessEnabled()) {
+	if (isBaneInspiredActionsEnabled()) {
 		applyCombatReadinessActions(combatantUpdates, rollTotal);
 	} else {
 		applyStandardInitiativeActions(combatantUpdates, rollTotal);
@@ -71,7 +71,7 @@ export async function applyHesitantCondition(
 	combatant: Combatant.Implementation,
 	rollTotal: number,
 ): Promise<void> {
-	if (!isCombatReadinessEnabled()) return;
+	if (!isBaneInspiredActionsEnabled()) return;
 	if (combatant.type !== 'character') return;
 
 	const actor = combatant.actor;

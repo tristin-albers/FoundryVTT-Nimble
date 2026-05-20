@@ -3,7 +3,7 @@ import {
 	getCombatantPipActiveStates,
 	getCombatantPipTypes,
 } from '../documents/combat/combatantSystem.js';
-import { isCombatReadinessEnabled } from '../settings/combatReadinessSettings.js';
+import { isBaneInspiredActionsEnabled } from '../settings/combatReadinessSettings.js';
 import { combatantActionMutationQueue } from './combatantActionMutationQueue.js';
 
 export const COMBATANT_ACTIONS_CURRENT_PATH = 'system.actions.base.current';
@@ -237,7 +237,7 @@ export interface ConsumeActionResult {
  * Returns the types that are available, or empty if standard pips exist.
  */
 export function getAvailableTypedActions(combatant: Combatant.Implementation): ActionType[] {
-	if (!isCombatReadinessEnabled()) return [];
+	if (!isBaneInspiredActionsEnabled()) return [];
 
 	const pipTypes = getCombatantPipTypes(combatant);
 	const pipActiveStates = getCombatantPipActiveStates(combatant);
@@ -272,7 +272,7 @@ export async function consumeCombatantAction(params: {
 	const cost = Number(params.actionCost ?? 1);
 	const normalizedCost = Number.isFinite(cost) && cost >= 1 ? cost : 1;
 
-	if (isCombatReadinessEnabled() && combatant.type === 'character') {
+	if (isBaneInspiredActionsEnabled() && combatant.type === 'character') {
 		const pipTypes = getCombatantPipTypes(combatant);
 		const pipActiveStates = getCombatantPipActiveStates(combatant);
 		const actionUpdate: Record<string, unknown> = { _id: params.combatantId };

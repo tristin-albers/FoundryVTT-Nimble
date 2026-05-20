@@ -160,7 +160,7 @@ class NimbleBaseItem<ItemType extends SystemItemTypes = SystemItemTypes> extends
 			this as unknown as ConstructorParameters<typeof ItemActivationManager>[0],
 			options,
 		);
-		const { activation, rolls, rollHidden, actionTypeOverride } = await manager.getData();
+		const { activation, rolls, rollHidden } = await manager.getData();
 		if (activation === null || rolls === null) {
 			return null;
 		}
@@ -217,9 +217,6 @@ class NimbleBaseItem<ItemType extends SystemItemTypes = SystemItemTypes> extends
 						itemUuid: this.uuid,
 						actorId: this.actor?.id,
 						tokenUuid: this.actor?.token?.uuid,
-						...(actionTypeOverride && actionTypeOverride !== 'standard'
-							? { actionTypeOverride }
-							: {}),
 					},
 				},
 				system: {

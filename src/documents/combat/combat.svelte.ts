@@ -1,6 +1,7 @@
 import { createSubscriber } from 'svelte/reactivity';
 import type { ActorRollOptions } from '#documents/actor/actorInterfaces.ts';
 import type { NimbleCombatant } from '#documents/combatant/combatant.svelte.js';
+import { SYSTEM_ID } from '#system';
 import {
 	getHeroicReactionUsageState,
 	isSoftBlockedReason,
@@ -17,7 +18,7 @@ import { isCombatantDead } from '#utils/isCombatantDead.js';
 import { getMinionGroupId, getMinionGroupSummaries } from '#utils/minionGrouping.js';
 import { queueCombatantMutationWithFreshDocument } from '#utils/queueCombatantMutationWithFreshDocument.js';
 import { findPipIndexToConsume } from '../../combat/actionType.js';
-import { isCombatReadinessEnabled } from '../../settings/combatReadinessSettings.js';
+import { isBaneInspiredActionsEnabled } from '../../settings/combatReadinessSettings.js';
 import {
 	getCombatantBaseActionMax,
 	getCombatantManualSortValue,
@@ -524,7 +525,7 @@ class NimbleCombat extends Combat {
 	async #refillCharacterActionsForTurnStart(
 		combatant: Combatant.Implementation | null,
 	): Promise<void> {
-		if (!isCombatReadinessEnabled()) return;
+		if (!isBaneInspiredActionsEnabled()) return;
 		if (!combatant || combatant.type !== 'character') return;
 
 		const combatantId = combatant.id;
@@ -567,9 +568,10 @@ class NimbleCombat extends Combat {
 	}
 
 	async #resetCharacterPipTypesForNewRound(): Promise<void> {
-		if (!isCombatReadinessEnabled()) return;
+		if (!isBaneInspiredActionsEnabled()) return;
 
 		const updates: Record<string, unknown>[] = [];
+
 		for (const combatant of this.combatants.contents) {
 			if (combatant.type !== 'character') continue;
 			const combatantId = combatant.id;
@@ -617,7 +619,7 @@ class NimbleCombat extends Combat {
 	}
 
 	async #removeHesitantConditionAfterRoundOne(): Promise<void> {
-		if (!isCombatReadinessEnabled()) return;
+		if (!isBaneInspiredActionsEnabled()) return;
 		if ((this.round ?? 1) <= 1) return;
 
 		const removals: Promise<unknown>[] = [];
@@ -951,7 +953,7 @@ class NimbleCombat extends Combat {
 					} as Record<string, unknown>;
 
 					// Pip-aware action deduction for combat readiness
-					if (isCombatReadinessEnabled()) {
+					if (isBaneInspiredActionsEnabled()) {
 						const pipTypes = getCombatantPipTypes(combatant);
 						const pipActiveStates = getCombatantPipActiveStates(combatant);
 						const actionsToConsume = usageState.requiredActions;
@@ -1436,7 +1438,7 @@ class NimbleCombat extends Combat {
 		return {
 			currentSide: getZipperCurrentSide(this),
 			roundStartSide:
-				foundry.utils.getProperty(this, 'flags.nimble.zipper.roundStartSide') === 'gm'
+				foundry.utils.getProperty(this, `flags.${SYSTEM_ID}.zipper.roundStartSide`) === 'gm'
 					? 'gm'
 					: 'player',
 		};
