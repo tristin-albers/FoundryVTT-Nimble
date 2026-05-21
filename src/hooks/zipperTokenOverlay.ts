@@ -16,19 +16,6 @@ import {
 	getMinionGroupSummaries,
 } from '../utils/minionGrouping.js';
 
-function blendColorSimple(base: number, accent: number, ratio: number): number {
-	const br = (base >> 16) & 0xff,
-		bg = (base >> 8) & 0xff,
-		bb = base & 0xff;
-	const ar = (accent >> 16) & 0xff,
-		ag = (accent >> 8) & 0xff,
-		ab = accent & 0xff;
-	const r = Math.round(br + (ar - br) * ratio);
-	const g = Math.round(bg + (ag - bg) * ratio);
-	const b = Math.round(bb + (ab - bb) * ratio);
-	return (r << 16) | (g << 8) | b;
-}
-
 const ZIPPER_OVERLAY_KEY = '_nimbleZipperSelectionOverlay';
 const ZIPPER_OVERLAY_CLICK_KEY = '_nimbleZipperSelectionClickHandler';
 const ZIPPER_PULSE_KEY = '_nimbleZipperPulseRing';
@@ -102,6 +89,7 @@ function getCombatForScene(sceneId: string): Combat | null {
 interface EligibleTokenInfo {
 	combatantId: string;
 	hesitantBlocked: boolean;
+	side: 'player' | 'gm';
 }
 
 function buildEligibleTokenIds(): Map<string, EligibleTokenInfo> {
@@ -151,6 +139,7 @@ function buildEligibleTokenIds(): Map<string, EligibleTokenInfo> {
 			eligibleMap.set(combatant.tokenId, {
 				combatantId: combatant.id,
 				hesitantBlocked: isHesitantBlocked(combat, combatant.id),
+				side: getCombatantZipperSide(combatant),
 			});
 		}
 	}
@@ -195,144 +184,103 @@ function createOverlay(
 	token: TokenWithZipperOverlay,
 	combatantId: string,
 	hesitantBlocked = false,
+	side: 'player' | 'gm' = 'player',
 ): void {
 	removeOverlay(token);
 
 	const isMultiSelected = multiSelectedCombatantIds.has(combatantId);
 	const tokenSize = Math.max(1, Number(token.w ?? 1));
 
-	// --- Visual badge (non-interactive, on the token like turn-completed) ---
+	// --- Visual swords icon (non-interactive, rendered on the token) ---
 	const container = new PIXI.Container();
 	container.eventMode = 'none';
 	container.zIndex = 1020;
 
-	// Green for normal, cyan for multi-selected, grey for hesitant-blocked
-	const accentColor = hesitantBlocked ? 0x6b7280 : isMultiSelected ? 0x06b6d4 : 0x22c55e;
+	const tokenHeight = Math.max(1, Number(token.h ?? tokenSize));
+	const centerX = Math.round(tokenSize / 2);
+	const centerY = Math.round(tokenHeight / 2);
 
-	// Rounded-rect badge matching the turn-completed icon style
-	const fontSize = Math.max(12, Math.min(24, Math.round(tokenSize * 0.22)));
-	const paddingX = Math.max(4, Math.round(fontSize * 0.35));
-	const paddingY = Math.max(2, Math.round(fontSize * 0.2));
+	// Pastel colors: soft teal for players, soft coral-red for GM/monsters, muted grey for hesitant
+	const iconColor = hesitantBlocked ? 0x9ca3af : side === 'player' ? 0xe8edf3 : 0xfca5a5;
+	const swordsSize = Math.max(24, Math.round(tokenSize * 0.7));
 
-	const label = new PIXI.Text(isMultiSelected ? `${multiSelectedCombatantIds.size}` : '\u2713', {
-		fontFamily: 'Signika',
-		fontSize,
-		fontWeight: '700',
-		fill: 0xf6f9ff,
-		align: 'center',
-	});
+	const iconText = isMultiSelected ? `\u2694 ${multiSelectedCombatantIds.size}` : '\u2694';
 	const rendererResolution = Number(
 		canvas?.app?.renderer?.resolution ?? globalThis.devicePixelRatio ?? 1,
 	);
-	label.resolution = Math.max(2, Number.isFinite(rendererResolution) ? rendererResolution : 2);
-	label.roundPixels = true;
-	label.anchor.set(0, 0);
+	const resolution = Math.max(2, Number.isFinite(rendererResolution) ? rendererResolution : 2);
 
-	const badgeWidth = Math.ceil(label.width + paddingX * 2);
-	const badgeHeight = Math.ceil(label.height + paddingY * 2);
-	const borderRadius = Math.max(4, Math.round(fontSize * 0.38));
+	// Main icon
+	const iconLabel = new PIXI.Text(iconText, {
+		fontFamily: 'Signika, sans-serif',
+		fontSize: swordsSize,
+		fontWeight: '900',
+		fill: iconColor,
+		align: 'center',
+		dropShadow: true,
+		dropShadowColor: 0x000000,
+		dropShadowBlur: 6,
+		dropShadowAlpha: 0.7,
+		dropShadowDistance: 0,
+	});
+	iconLabel.resolution = resolution;
+	iconLabel.roundPixels = true;
+	iconLabel.anchor.set(0.5, 0.5);
 
-	// Blend background color same way as the turn-completed badge
-	const backgroundColor = blendColorSimple(0x0f1422, accentColor, 0.22);
-
-	const background = new PIXI.Graphics();
-	background.lineStyle({ width: 1, color: accentColor, alpha: 0.95 });
-	background.beginFill(backgroundColor, 0.95);
-	background.drawRoundedRect(0, 0, badgeWidth, badgeHeight, borderRadius);
-	background.endFill();
-
-	label.position.set(
-		Math.round((badgeWidth - label.width) / 2),
-		Math.round((badgeHeight - label.height) / 2),
-	);
-
-	container.addChild(background);
-	container.addChild(label);
-
-	// Position at top-right — same as the turn-completed badge
-	const badgeLocalX = Math.round(tokenSize - badgeWidth / 2);
-	const badgeLocalY = Math.round(-badgeHeight / 2);
-	container.position.set(badgeLocalX, badgeLocalY);
+	container.addChild(iconLabel);
+	container.position.set(centerX, centerY);
 
 	token.addChild(container);
 	token[ZIPPER_OVERLAY_KEY] = container;
 
-	// --- Separate interactive hit target on canvas.interface (not clipped by token) ---
+	// --- Interactive hit target on canvas.interface ---
 	const interfaceLayer = (canvas as any).interface as PIXI.Container | undefined;
+	let isHovered = false;
 	if (interfaceLayer) {
 		const hitTarget = new PIXI.Container();
 		hitTarget.eventMode = 'static';
 		hitTarget.cursor = hesitantBlocked ? 'not-allowed' : 'pointer';
 		hitTarget.zIndex = 10000;
 
-		const hitPad = 4;
+		const hitPad = 6;
 		const hitBg = new PIXI.Graphics();
-		hitBg.beginFill(0x000000, 0.001); // nearly invisible but needed for hit detection
-		hitBg.drawRoundedRect(
-			-hitPad,
-			-hitPad,
-			badgeWidth + hitPad * 2,
-			badgeHeight + hitPad * 2,
-			borderRadius,
-		);
+		hitBg.beginFill(0x000000, 0.001);
+		hitBg.drawCircle(0, 0, Math.round(swordsSize / 2) + hitPad);
 		hitBg.endFill();
 		hitTarget.addChild(hitBg);
 
-		// Position in world coordinates
 		const tokenX = Number(token.x ?? 0);
 		const tokenY = Number(token.y ?? 0);
-		hitTarget.position.set(Math.round(tokenX + badgeLocalX), Math.round(tokenY + badgeLocalY));
+		hitTarget.position.set(Math.round(tokenX + centerX), Math.round(tokenY + centerY));
 
-		// Hover state — scale the visual badge and hit target together
+		// Hover: stop pulsing, snap to slightly larger than max pulse size
 		hitTarget.on('pointerover', () => {
-			container.scale.set(1.2);
-			hitTarget.scale.set(1.2);
+			isHovered = true;
+			container.scale.set(1.15);
 		});
 		hitTarget.on('pointerout', () => {
-			container.scale.set(1);
-			hitTarget.scale.set(1);
+			isHovered = false;
 		});
 
 		interfaceLayer.addChild(hitTarget);
 		token[ZIPPER_HIT_TARGET_KEY] = hitTarget;
 	}
 
-	// Pulsing glow ring — sized to fit inside the dynamic token ring as a back-glow
-	const tokenHeight = Math.max(1, Number(token.h ?? tokenSize));
-	const centerX = Math.round(tokenSize / 2);
-	const centerY = Math.round(tokenHeight / 2);
-	// Shrink to ~80% of token bounds so it sits inside the dynamic ring frame
-	const ringScale = 0.8;
-	const radiusX = Math.round((tokenSize / 2) * ringScale);
-	const radiusY = Math.round((tokenHeight / 2) * ringScale);
-	const pulseRing = new PIXI.Graphics();
-
-	// Outer soft glow layer (wider, more transparent)
-	pulseRing.lineStyle({ width: isMultiSelected ? 6 : 5, color: accentColor, alpha: 0.2 });
-	pulseRing.drawEllipse(centerX, centerY, radiusX + 3, radiusY + 3);
-
-	// Main ring
-	pulseRing.lineStyle({ width: isMultiSelected ? 3 : 2.5, color: accentColor, alpha: 0.5 });
-	pulseRing.drawEllipse(centerX, centerY, radiusX, radiusY);
-
-	pulseRing.eventMode = 'none';
-	pulseRing.zIndex = 1019;
-	token.addChild(pulseRing);
-	token[ZIPPER_PULSE_KEY] = pulseRing;
-
-	// Animate the pulse via the shared PIXI ticker (static low opacity for hesitant-blocked)
+	// Pulsing animation — pauses on hover and snaps to hover scale
+	token[ZIPPER_PULSE_KEY] = null;
 	const ticker = canvas?.app?.ticker as PIXI.Ticker | undefined;
 	if (hesitantBlocked) {
-		pulseRing.alpha = 0.2;
-		container.alpha = 0.5;
+		container.alpha = 0.35;
 	} else if (ticker) {
 		const pulseCallback = () => {
-			if (!pulseRing.parent) {
+			if (!container.parent) {
 				ticker.remove(pulseCallback);
 				return;
 			}
+			if (isHovered) return; // hold at hover scale
 			const time = performance.now() / 1000;
-			pulseRing.alpha = 0.4 + Math.sin(time * 2.5) * 0.4;
+			const scale = 0.85 + Math.sin(time * 1) * 0.15; // gentle oscillation 0.7–1.0
+			container.scale.set(scale);
 		};
 		ticker.add(pulseCallback);
 	}
@@ -413,7 +361,7 @@ function refreshTokenOverlay(
 		return;
 	}
 
-	createOverlay(token, info.combatantId, info.hesitantBlocked);
+	createOverlay(token, info.combatantId, info.hesitantBlocked, info.side);
 }
 
 function notifySelectionPhaseIfNeeded(): void {
