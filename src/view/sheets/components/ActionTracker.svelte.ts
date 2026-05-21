@@ -16,6 +16,7 @@ import { initiativeRollLock } from '#utils/initiativeRollLock.js';
 import localize from '#utils/localize.js';
 import { queueCombatantMutationWithFreshDocument } from '#utils/queueCombatantMutationWithFreshDocument.js';
 import type { ActionType } from '../../../combat/actionType.js';
+import { isBaneInspiredActionsEnabled } from '../../../settings/combatReadinessSettings.js';
 
 // ============================================================================
 // Types
@@ -106,8 +107,29 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 
 		const actions = getCombatantBaseActions(combatant);
 		const additional = getCombatantAdditionalActions(combatant);
-		const bonusCurrent = getCombatantBonusCurrent(combatant);
 		const max = actions.max || 3;
+		const effectiveMax = max + additional;
+
+		// When the Bane/Inspired variant is off, the numeric `current` is the
+		// single source of truth: it is the only field the rest of the system
+		// (action spending, the combat tracker, turn refills) keeps up to date.
+		// Derive pip availability from it so the sheet mirrors the tracker rather
+		// than reading the per-pip booleans, which go stale in this mode.
+		if (!isBaneInspiredActionsEnabled()) {
+			const current = actions.current;
+			const baseActive = Math.max(0, Math.min(current, max));
+			return {
+				current,
+				max,
+				additional,
+				bonusCurrent: Math.max(0, Math.min(current - max, additional)),
+				effectiveMax,
+				pipTypes: ['standard', 'standard', 'standard'],
+				pipActiveStates: [0, 1, 2].map((i) => i < baseActive),
+			};
+		}
+
+		const bonusCurrent = getCombatantBonusCurrent(combatant);
 		const pipTypes = getCombatantPipTypes(combatant);
 		const pipActiveStates = getCombatantPipActiveStates(combatant);
 		return {
@@ -115,7 +137,7 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 			max,
 			additional,
 			bonusCurrent,
-			effectiveMax: max + additional,
+			effectiveMax,
 			pipTypes,
 			pipActiveStates,
 		};
@@ -278,6 +300,22 @@ export function createActionTrackerState(getActor: () => NimbleCharacter) {
 
 	function handlePipClick(index: number, event?: MouseEvent): void {
 		if (!hasInitiative) return;
+
+		// Bane/Inspired off: `current` is the single source of truth, so clicking a
+		// pip sets the available-action count directly (spend down / restore up),
+		// matching the combat tracker. Pip typing (ctrl/shift) is variant-only.
+		if (!isBaneInspiredActionsEnabled()) {
+			const isActive = index < actionsData.current;
+			const newCurrent = Math.max(
+				0,
+				Math.min(isActive ? index : index + 1, actionsData.effectiveMax),
+			);
+			if (newCurrent === actionsData.current) return;
+			void updatePipState({
+				'system.actions.base.current': newCurrent,
+			} as Record<string, unknown>);
+			return;
+		}
 
 		const isBonus = index >= actionsData.max;
 
