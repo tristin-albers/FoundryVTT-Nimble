@@ -146,6 +146,14 @@
 		}
 	}
 
+	&--npc {
+		// Open sized to content (height: 'auto' in the sheet defaults) but never
+		// taller than the viewport — overflow scrolls in the body instead.
+		&:not(.minimized) {
+			max-height: calc(100vh - 2rem);
+		}
+	}
+
 	.window-content {
 		padding: 0;
 	}

@@ -8,7 +8,7 @@ export const SHEET_DEFAULTS = {
 	},
 	npc: {
 		width: 332,
-		height: 650,
+		height: 'auto',
 	},
 	feature: {
 		width: 550,
