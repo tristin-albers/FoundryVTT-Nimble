@@ -3,6 +3,7 @@ The following icons are sourced from [game-icons.net](https://game-icons.net/) a
 - [charmed.svg](https://game-icons.net/1x1/lorc/smitten.html) (Created by Lorc)
 - [charged.svg](https://game-icons.net/1x1/lorc/lightning-branches.html) (Created by Lorc)
 - [concentration.svg](https://game-icons.net/1x1/lorc/meditation.html) (Created by Lorc)
+- [crossed-swords.svg](https://game-icons.net/1x1/lorc/crossed-swords.html) (Created by Lorc)
 - [d20.svg](https://game-icons.net/1x1/delapouite/dice-twenty-faces-twenty.html) (Created by Delapouite)
 - [dazed.svg](https://game-icons.net/1x1/skoll/knockout.html) (Created by Skoll)
 - [distracted.svg](https://game-icons.net/1x1/darkzaitzev/distraction.html) (Created by DarkZaitzev)

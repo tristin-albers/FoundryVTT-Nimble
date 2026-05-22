@@ -1,3 +1,4 @@
+import { SYSTEM_PATH } from '#system';
 import {
 	getCombatantZipperSide,
 	getZipperActCounter,
@@ -21,6 +22,15 @@ const ZIPPER_OVERLAY_CLICK_KEY = '_nimbleZipperSelectionClickHandler';
 const ZIPPER_PULSE_KEY = '_nimbleZipperPulseRing';
 const ZIPPER_MULTI_SELECT_KEY = '_nimbleZipperMultiSelected';
 const ZIPPER_HIT_TARGET_KEY = '_nimbleZipperHitTarget';
+
+// Resting opacity for the swords overlay; brightens to full (1.0) on hover.
+const ZIPPER_OVERLAY_RESTING_ALPHA = 0.6;
+// Hesitant-blocked tokens rest dimmer still to read as unavailable.
+const ZIPPER_OVERLAY_HESITANT_ALPHA = 0.35;
+
+// Bundled crossed-swords icon (game-icons.net, CC BY 3.0) rendered on eligible
+// tokens. White-filled so it can be tinted per side via PIXI's sprite tint.
+const CROSSED_SWORDS_TEXTURE_PATH = `${SYSTEM_PATH}/assets/icons/crossed-swords.svg`;
 
 type TokenWithZipperOverlay = Token & {
 	[ZIPPER_OVERLAY_KEY]?: PIXI.Container | null;
@@ -180,6 +190,28 @@ function removeOverlay(token: TokenWithZipperOverlay): void {
 	}
 }
 
+/**
+ * Build a crossed-swords sprite from the bundled SVG, tinted and sized in px.
+ * PIXI caches the texture by path; the size is (re)applied once the SVG has
+ * rasterized so the sprite never lingers at the wrong scale on first load.
+ */
+function createSwordsSprite(sizePx: number, tint: number): PIXI.Sprite {
+	const texture = PIXI.Texture.from(CROSSED_SWORDS_TEXTURE_PATH);
+	const sprite = new PIXI.Sprite(texture);
+	sprite.anchor.set(0.5, 0.5);
+	sprite.tint = tint;
+
+	const applySize = () => {
+		sprite.width = sizePx;
+		sprite.height = sizePx;
+	};
+	applySize();
+	if (!texture.baseTexture.valid) {
+		texture.baseTexture.once('loaded', applySize);
+	}
+	return sprite;
+}
+
 function createOverlay(
 	token: TokenWithZipperOverlay,
 	combatantId: string,
@@ -200,38 +232,51 @@ function createOverlay(
 	const centerX = Math.round(tokenSize / 2);
 	const centerY = Math.round(tokenHeight / 2);
 
-	// Pastel colors: soft teal for players, soft coral-red for GM/monsters, muted grey for hesitant
+	// Tint: soft off-white for players, soft coral-red for GM/monsters, muted grey for hesitant
 	const iconColor = hesitantBlocked ? 0x9ca3af : side === 'player' ? 0xe8edf3 : 0xfca5a5;
-	const swordsSize = Math.max(24, Math.round(tokenSize * 0.7));
+	const swordsSize = Math.max(20, Math.round(tokenSize * 0.5));
 
-	const iconText = isMultiSelected ? `\u2694 ${multiSelectedCombatantIds.size}` : '\u2694';
-	const rendererResolution = Number(
-		canvas?.app?.renderer?.resolution ?? globalThis.devicePixelRatio ?? 1,
-	);
-	const resolution = Math.max(2, Number.isFinite(rendererResolution) ? rendererResolution : 2);
+	// Soft dark shadow behind the icon for contrast against light maps.
+	const shadowSprite = createSwordsSprite(Math.round(swordsSize * 1.06), 0x000000);
+	shadowSprite.alpha = 0.45;
+	container.addChild(shadowSprite);
 
-	// Main icon
-	const iconLabel = new PIXI.Text(iconText, {
-		fontFamily: 'Signika, sans-serif',
-		fontSize: swordsSize,
-		fontWeight: '900',
-		fill: iconColor,
-		align: 'center',
-		dropShadow: true,
-		dropShadowColor: 0x000000,
-		dropShadowBlur: 6,
-		dropShadowAlpha: 0.7,
-		dropShadowDistance: 0,
-	});
-	iconLabel.resolution = resolution;
-	iconLabel.roundPixels = true;
-	iconLabel.anchor.set(0.5, 0.5);
+	// Main crossed-swords icon.
+	const iconSprite = createSwordsSprite(swordsSize, iconColor);
+	container.addChild(iconSprite);
 
-	container.addChild(iconLabel);
+	// GM multi-select: show how many tokens are queued for the group turn.
+	if (isMultiSelected) {
+		const rendererResolution = Number(
+			canvas?.app?.renderer?.resolution ?? globalThis.devicePixelRatio ?? 1,
+		);
+		const resolution = Math.max(2, Number.isFinite(rendererResolution) ? rendererResolution : 2);
+		const countLabel = new PIXI.Text(String(multiSelectedCombatantIds.size), {
+			fontFamily: 'Signika, sans-serif',
+			fontSize: Math.max(12, Math.round(swordsSize * 0.42)),
+			fontWeight: '900',
+			fill: 0xffffff,
+			stroke: 0x000000,
+			strokeThickness: 4,
+			align: 'center',
+		});
+		countLabel.resolution = resolution;
+		countLabel.roundPixels = true;
+		countLabel.anchor.set(0.5, 0.5);
+		countLabel.position.set(Math.round(swordsSize * 0.45), Math.round(swordsSize * 0.45));
+		container.addChild(countLabel);
+	}
+
 	container.position.set(centerX, centerY);
 
 	token.addChild(container);
 	token[ZIPPER_OVERLAY_KEY] = container;
+
+	// Dull at rest, full opacity on hover (see the hit-target handlers below).
+	const restingAlpha = hesitantBlocked
+		? ZIPPER_OVERLAY_HESITANT_ALPHA
+		: ZIPPER_OVERLAY_RESTING_ALPHA;
+	container.alpha = restingAlpha;
 
 	// --- Interactive hit target on canvas.interface ---
 	const interfaceLayer = (canvas as any).interface as PIXI.Container | undefined;
@@ -253,25 +298,27 @@ function createOverlay(
 		const tokenY = Number(token.y ?? 0);
 		hitTarget.position.set(Math.round(tokenX + centerX), Math.round(tokenY + centerY));
 
-		// Hover: stop pulsing, snap to slightly larger than max pulse size
+		// Hover: stop pulsing, snap to slightly larger than max pulse size,
+		// and brighten to full opacity.
 		hitTarget.on('pointerover', () => {
 			isHovered = true;
 			container.scale.set(1.15);
+			container.alpha = 1;
 		});
 		hitTarget.on('pointerout', () => {
 			isHovered = false;
+			container.alpha = restingAlpha;
 		});
 
 		interfaceLayer.addChild(hitTarget);
 		token[ZIPPER_HIT_TARGET_KEY] = hitTarget;
 	}
 
-	// Pulsing animation — pauses on hover and snaps to hover scale
+	// Pulsing animation — pauses on hover and snaps to hover scale.
+	// Hesitant tokens don't pulse; their resting alpha is set above.
 	token[ZIPPER_PULSE_KEY] = null;
 	const ticker = canvas?.app?.ticker as PIXI.Ticker | undefined;
-	if (hesitantBlocked) {
-		container.alpha = 0.35;
-	} else if (ticker) {
+	if (!hesitantBlocked && ticker) {
 		const pulseCallback = () => {
 			if (!container.parent) {
 				ticker.remove(pulseCallback);
