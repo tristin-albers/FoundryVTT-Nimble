@@ -87,6 +87,69 @@
 		trackerViewState.trackScrollbarElement = trackScrollbarElement;
 	});
 
+	// --- Zipper acted-card slide animation (manual FLIP) ---
+	// The built-in `animate:flip` can't be used here: the cards render inside
+	// {#if} branches (not immediate children of the keyed each) and the track is
+	// virtualized. So we FLIP manually, and only when the set of acted combatants
+	// changes — scrolling and drag-reordering must not trigger a slide.
+	const ZIPPER_FLIP_DURATION_MS = 300;
+	const zipperFlipRects = new Map<string, DOMRect>();
+	let zipperActedSignature = '';
+
+	function captureZipperCardRects(): void {
+		zipperFlipRects.clear();
+		if (!trackElement) return;
+		for (const el of trackElement.querySelectorAll<HTMLElement>('[data-track-key]')) {
+			const key = el.dataset.trackKey;
+			if (key) zipperFlipRects.set(key, el.getBoundingClientRect());
+		}
+	}
+
+	function getZipperActedSignature(): string {
+		const actedKeys: string[] = [];
+		for (const entry of virtualizedAliveEntries.entries) {
+			if (entry.kind === 'combatant' && hasZipperActed(entry.combatant)) actedKeys.push(entry.key);
+		}
+		return actedKeys.join('|');
+	}
+
+	const prefersReducedMotion = (): boolean =>
+		globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+
+	// Capture pre-render card positions whenever the rendered entries change.
+	$effect.pre(() => {
+		const entries = virtualizedAliveEntries.entries;
+		if (!isZipperMode || entries.length === 0 || !trackElement) return;
+		captureZipperCardRects();
+	});
+
+	// After the DOM updates, slide moved cards — but only on an acted-set change.
+	$effect(() => {
+		if (!isZipperMode) {
+			zipperActedSignature = '';
+			return;
+		}
+		const nextSignature = getZipperActedSignature();
+		const changed = nextSignature !== zipperActedSignature;
+		zipperActedSignature = nextSignature;
+		if (!changed || !trackElement || prefersReducedMotion()) return;
+
+		for (const el of trackElement.querySelectorAll<HTMLElement>('[data-track-key]')) {
+			const key = el.dataset.trackKey;
+			if (!key) continue;
+			const prev = zipperFlipRects.get(key);
+			if (!prev) continue;
+			const next = el.getBoundingClientRect();
+			const dx = prev.left - next.left;
+			const dy = prev.top - next.top;
+			if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue;
+			el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'translate(0, 0)' }], {
+				duration: ZIPPER_FLIP_DURATION_MS,
+				easing: 'ease-in-out',
+			});
+		}
+	});
+
 	const handleCombatantInitiativeRoll = trackerViewState.handleCombatantInitiativeRoll;
 	const handleEndTurnFromCard = trackerViewState.handleEndTurnFromCard;
 	const toggleMonsterCardExpansion = trackerViewState.toggleMonsterCardExpansion;
