@@ -60,6 +60,7 @@ import {
 	buildZipperCombatFlagUpdate,
 	canSelectCombatantForZipperTurn,
 	determineFirstSide,
+	getUnactedCombatantsForSide,
 	getZipperActCounter,
 	getZipperCurrentSide,
 	hasAllCombatantsActed,
@@ -840,6 +841,8 @@ class NimbleCombat extends Combat {
 			await this.#persistAtomicTurnState({ turn: this.turn });
 		}
 
+		await this.#maybeAutoSelectSoleEligible();
+
 		return result;
 	}
 
@@ -1391,6 +1394,8 @@ class NimbleCombat extends Combat {
 		this.#syncTurnIndexWithAliveTurns();
 		await this.#persistAtomicTurnState({ turn: this.turn });
 
+		await this.#maybeAutoSelectSoleEligible();
+
 		return this as this;
 	}
 
@@ -1427,6 +1432,8 @@ class NimbleCombat extends Combat {
 			this.turns = this.setupTurns();
 			this.#syncTurnIndexWithAliveTurns();
 		}
+
+		await this.#maybeAutoSelectSoleEligible();
 
 		return result;
 	}
@@ -1542,6 +1549,31 @@ class NimbleCombat extends Combat {
 
 		// Combat Readiness: refill actions for the combatant whose turn is starting
 		await this.#refillCharacterActionsForTurnStart(this.combatant ?? null);
+	}
+
+	/**
+	 * When entering selection mode, if the current side has exactly one eligible
+	 * combatant (un-acted, alive, a minion group counted as one), select it
+	 * automatically so there's no pointless click. Runs on the GM client only so
+	 * the authoritative selection happens once; the result propagates to players.
+	 *
+	 * Returns true if a combatant was auto-selected.
+	 */
+	async #maybeAutoSelectSoleEligible(): Promise<boolean> {
+		if (!isZipperInitiativeActive()) return false;
+		if (!game.user?.isGM) return false;
+		if (!isZipperAwaitingSelection(this)) return false;
+
+		const currentSide = getZipperCurrentSide(this);
+		const eligible = getUnactedCombatantsForSide(this, currentSide);
+		if (eligible.length !== 1) return false;
+
+		const soleId = eligible[0]?.id;
+		if (!soleId) return false;
+		if (!canSelectCombatantForZipperTurn(this, soleId, currentSide).valid) return false;
+
+		await this.selectZipperCombatant(soleId);
+		return true;
 	}
 
 	/**
