@@ -202,6 +202,11 @@ function createSwordsSprite(sizePx: number, tint: number): PIXI.Sprite {
 	sprite.tint = tint;
 
 	const applySize = () => {
+		// The SVG rasterizes asynchronously; by the time `loaded` fires the
+		// sprite may already have been destroyed (a refresh burst on combat
+		// start tears overlays down mid-load). A destroyed sprite has a null
+		// transform, so the width setter would throw reading `scale`.
+		if (sprite.destroyed || !sprite.transform) return;
 		sprite.width = sizePx;
 		sprite.height = sizePx;
 	};
