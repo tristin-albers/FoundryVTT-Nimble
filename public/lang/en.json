@@ -2305,7 +2305,12 @@
 			"gmTurn": "GM Turn",
 			"yourTurn": "Your turn — select a hero to act",
 			"gmSelectEnemy": "Select an enemy to act",
-			"hesitantBlocked": "Hesitant heroes must wait for non-hesitant heroes to act first"
+			"hesitantBlocked": "Hesitant heroes must wait for non-hesitant heroes to act first",
+			"heroesShort": "Heroes",
+			"gmShort": "GM",
+			"groupTurn": "Group",
+			"lastHero": "Last hero — selecting will pass to the GM",
+			"lastEnemy": "Last enemy — selecting will pass to the players"
 		},
 		"nimbleCombatSystemWindow": {
 			"title": "Combat System",

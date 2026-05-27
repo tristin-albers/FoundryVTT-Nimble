@@ -165,6 +165,50 @@ export function isOverflowPhase(combat: Combat): boolean {
 	return playerRemaining === 0 || gmRemaining === 0;
 }
 
+/**
+ * Return the count of all alive combatants on a side, deduplicated by minion
+ * group (one group counts as one combatant). Includes both acted and unacted.
+ */
+export function getAliveCountForSide(combat: Combat, side: ZipperSide): number {
+	const groupSummaries = getMinionGroupSummaries(combat.combatants.contents);
+	const seenGroupIds = new Set<string>();
+	let count = 0;
+	for (const combatant of combat.combatants.contents) {
+		if (isCombatantDead(combatant)) continue;
+		if (getCombatantZipperSide(combatant) !== side) continue;
+		const groupId = getMinionGroupId(combatant);
+		if (groupId) {
+			if (seenGroupIds.has(groupId)) continue;
+			seenGroupIds.add(groupId);
+			const summary = groupSummaries.get(groupId);
+			if (summary) {
+				const leader = getEffectiveMinionGroupLeader(summary, { aliveOnly: true });
+				if (leader && leader.id !== combatant.id) continue;
+			}
+		}
+		count++;
+	}
+	return count;
+}
+
+/**
+ * Side progress snapshot for Feature 6 (tracker indicator) and Feature 7
+ * (end-of-side telegraph). `unacted` matches `getUnactedCombatantsForSide(...).length`.
+ */
+export function getZipperSideStats(combat: Combat): {
+	player: { acted: number; total: number; unacted: number };
+	gm: { acted: number; total: number; unacted: number };
+} {
+	const playerTotal = getAliveCountForSide(combat, 'player');
+	const gmTotal = getAliveCountForSide(combat, 'gm');
+	const playerUnacted = getUnactedCombatantsForSide(combat, 'player').length;
+	const gmUnacted = getUnactedCombatantsForSide(combat, 'gm').length;
+	return {
+		player: { acted: playerTotal - playerUnacted, total: playerTotal, unacted: playerUnacted },
+		gm: { acted: gmTotal - gmUnacted, total: gmTotal, unacted: gmUnacted },
+	};
+}
+
 export function hasAllCombatantsActed(combat: Combat): boolean {
 	return getAllUnactedCombatants(combat).length === 0;
 }

@@ -2,9 +2,12 @@
 	import { fade } from 'svelte/transition';
 	import {
 		getCombatantZipperSide,
+		getTurnHistory,
 		getZipperCurrentSide,
+		getZipperSideStats,
 		hasZipperActed,
 		isHesitantBlocked,
+		type TurnHistoryEntry,
 	} from '../../documents/combat/zipperTurnState.js';
 	import { getMinionGroupId } from '../../utils/minionGrouping.js';
 	import { createCtTopTrackerState } from './CtTopTracker.state.svelte.js';
@@ -68,6 +71,22 @@
 	let isZipperMode = $derived(trackerViewState.isZipperMode);
 	let zipperCurrentSide = $derived(trackerViewState.zipperCurrentSide);
 	let zipperAwaitingSelection = $derived(trackerViewState.zipperAwaitingSelection);
+
+	// Feature 4 — turn history strip + Feature 6 — side progress indicator.
+	// Reactivity flows from currentCombat (which the tracker store already proxies
+	// to update on combat document changes).
+	let zipperTurnHistory = $derived<TurnHistoryEntry[]>(
+		isZipperMode && currentCombat ? getTurnHistory(currentCombat) : [],
+	);
+	let zipperSideStats = $derived(
+		isZipperMode && currentCombat
+			? getZipperSideStats(currentCombat)
+			: { player: { acted: 0, total: 0, unacted: 0 }, gm: { acted: 0, total: 0, unacted: 0 } },
+	);
+	// Feature 7 — true when selecting will end the current side's turn.
+	let zipperIsLastOnSide = $derived(
+		isZipperMode && zipperAwaitingSelection && zipperSideStats[zipperCurrentSide].unacted === 1,
+	);
 	let zipperOverflow = $derived(trackerViewState.zipperOverflow);
 	const handleZipperToggleActed = trackerViewState.handleZipperToggleActed;
 	const handleZipperCardSelect = trackerViewState.handleZipperCardSelect;
@@ -336,6 +355,7 @@
 					class:nimble-ct__zipper-side-indicator--player={zipperCurrentSide === 'player'}
 					class:nimble-ct__zipper-side-indicator--gm={zipperCurrentSide === 'gm'}
 					class:nimble-ct__zipper-side-indicator--awaiting={zipperAwaitingSelection}
+					class:nimble-ct__zipper-side-indicator--last-on-side={zipperIsLastOnSide}
 				>
 					{#if zipperAwaitingSelection}
 						<i class="fa-solid fa-hourglass-half"></i>
@@ -348,11 +368,73 @@
 									'NIMBLE.zipperInitiative.selectEnemy',
 									'GM: choose an enemy to act',
 								)}
+						{#if zipperIsLastOnSide}
+							<span class="nimble-ct__zipper-side-indicator-telegraph">
+								<i class="fa-solid fa-arrow-right-arrow-left"></i>
+								{zipperCurrentSide === 'player'
+									? localizeWithFallback(
+											'NIMBLE.zipperInitiative.lastHero',
+											'Last hero — selecting will pass to the GM',
+										)
+									: localizeWithFallback(
+											'NIMBLE.zipperInitiative.lastEnemy',
+											'Last enemy — selecting will pass to the players',
+										)}
+							</span>
+						{/if}
 					{:else}
 						<i class="fa-solid fa-dice-d20"></i>
 						{localizeWithFallback('NIMBLE.zipperInitiative.acting', 'Turn in progress')}
 					{/if}
 				</div>
+				<div class="nimble-ct__zipper-side-progress" aria-label="Side turn progress">
+					<span
+						class="nimble-ct__zipper-side-progress-chip nimble-ct__zipper-side-progress-chip--player"
+						class:nimble-ct__zipper-side-progress-chip--current={zipperCurrentSide === 'player'}
+					>
+						<i class="fa-solid fa-shield-halved"></i>
+						{localizeWithFallback('NIMBLE.zipperInitiative.heroesShort', 'Heroes')}
+						{zipperSideStats.player.acted}/{zipperSideStats.player.total}
+					</span>
+					<span
+						class="nimble-ct__zipper-side-progress-chip nimble-ct__zipper-side-progress-chip--gm"
+						class:nimble-ct__zipper-side-progress-chip--current={zipperCurrentSide === 'gm'}
+					>
+						<i class="fa-solid fa-skull"></i>
+						{localizeWithFallback('NIMBLE.zipperInitiative.gmShort', 'GM')}
+						{zipperSideStats.gm.acted}/{zipperSideStats.gm.total}
+					</span>
+				</div>
+				{#if zipperTurnHistory.length > 0}
+					<ol class="nimble-ct__zipper-turn-history" aria-label="Turn history this round">
+						{#each zipperTurnHistory as entry (`${entry.actOrder}-${entry.combatantId}`)}
+							{@const historyCombatant = currentCombat?.combatants.get(entry.combatantId)}
+							{@const historyName =
+								historyCombatant?.name ??
+								(entry.isGroup
+									? localizeWithFallback('NIMBLE.zipperInitiative.groupTurn', 'Group')
+									: '?')}
+							<li
+								class="nimble-ct__zipper-turn-history-entry"
+								class:nimble-ct__zipper-turn-history-entry--player={entry.side === 'player'}
+								class:nimble-ct__zipper-turn-history-entry--gm={entry.side === 'gm'}
+								class:nimble-ct__zipper-turn-history-entry--undone={entry.undone}
+								data-tooltip={entry.undone
+									? `${entry.actOrder}. ${historyName} (undone)`
+									: `${entry.actOrder}. ${historyName}`}
+							>
+								<span class="nimble-ct__zipper-turn-history-order">{entry.actOrder}</span>
+								<span class="nimble-ct__zipper-turn-history-name">{historyName}</span>
+								{#if entry.isGroup}
+									<i class="fa-solid fa-object-group nimble-ct__zipper-turn-history-group-icon"></i>
+								{/if}
+								{#if entry.undone}
+									<i class="fa-solid fa-rotate-left nimble-ct__zipper-turn-history-undone-icon"></i>
+								{/if}
+							</li>
+						{/each}
+					</ol>
+				{/if}
 			{/if}
 			{#if turnGroupSelectionActive}
 				<div class="nimble-ct__group-confirm-bar">
@@ -2878,6 +2960,111 @@
 		background: color-mix(in srgb, hsl(0 60% 25%) 85%, transparent);
 		border-color: color-mix(in srgb, hsl(0 71% 45%) 50%, transparent);
 		color: hsl(0 71% 80%);
+	}
+	/* Feature 7 — end-of-side telegraph: amber accent when this is the last
+	   selectable combatant on the current side (clicking ends the side's turn). */
+	.nimble-ct__zipper-side-indicator--last-on-side {
+		box-shadow: 0 0 0 1px color-mix(in srgb, hsl(40 90% 55%) 60%, transparent) inset;
+	}
+	.nimble-ct__zipper-side-indicator-telegraph {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		margin-left: 0.5rem;
+		padding-left: 0.5rem;
+		border-left: 1px solid color-mix(in srgb, hsl(0 0% 100%) 25%, transparent);
+		color: hsl(40 90% 70%);
+		font-weight: 500;
+	}
+
+	/* Feature 6 — side progress chips */
+	.nimble-ct__zipper-side-progress {
+		position: absolute;
+		top: -1.5rem;
+		left: calc(50% + 9rem);
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
+		font-size: 0.65rem;
+		font-weight: 600;
+		white-space: nowrap;
+		pointer-events: none;
+		z-index: 20;
+	}
+	.nimble-ct__zipper-side-progress-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		padding: 0.15rem 0.45rem;
+		border-radius: 0.25rem;
+		background: color-mix(in srgb, hsl(220 15% 15%) 85%, transparent);
+		border: 1px solid color-mix(in srgb, hsl(0 0% 100%) 12%, transparent);
+		color: hsl(0 0% 65%);
+		opacity: 0.75;
+	}
+	.nimble-ct__zipper-side-progress-chip--current {
+		opacity: 1;
+	}
+	.nimble-ct__zipper-side-progress-chip--player.nimble-ct__zipper-side-progress-chip--current {
+		color: hsl(142 71% 80%);
+		border-color: color-mix(in srgb, hsl(142 71% 45%) 50%, transparent);
+	}
+	.nimble-ct__zipper-side-progress-chip--gm.nimble-ct__zipper-side-progress-chip--current {
+		color: hsl(0 71% 80%);
+		border-color: color-mix(in srgb, hsl(0 71% 45%) 50%, transparent);
+	}
+
+	/* Feature 4 — turn history strip */
+	.nimble-ct__zipper-turn-history {
+		position: absolute;
+		top: -3rem;
+		left: 50%;
+		transform: translateX(-50%);
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		font-size: 0.65rem;
+		font-weight: 600;
+		pointer-events: auto;
+		z-index: 20;
+	}
+	.nimble-ct__zipper-turn-history-entry {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.2rem;
+		padding: 0.1rem 0.4rem;
+		border-radius: 0.2rem;
+		background: color-mix(in srgb, hsl(220 15% 15%) 85%, transparent);
+		border: 1px solid color-mix(in srgb, hsl(0 0% 100%) 12%, transparent);
+		color: hsl(0 0% 75%);
+	}
+	.nimble-ct__zipper-turn-history-entry--player {
+		border-color: color-mix(in srgb, hsl(142 71% 45%) 40%, transparent);
+	}
+	.nimble-ct__zipper-turn-history-entry--gm {
+		border-color: color-mix(in srgb, hsl(0 71% 45%) 40%, transparent);
+	}
+	.nimble-ct__zipper-turn-history-entry--undone {
+		opacity: 0.45;
+		text-decoration: line-through;
+	}
+	.nimble-ct__zipper-turn-history-order {
+		font-variant-numeric: tabular-nums;
+		opacity: 0.6;
+	}
+	.nimble-ct__zipper-turn-history-name {
+		max-width: 6rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.nimble-ct__zipper-turn-history-group-icon,
+	.nimble-ct__zipper-turn-history-undone-icon {
+		font-size: 0.55rem;
+		opacity: 0.7;
 	}
 
 	/* Turn group selection */
