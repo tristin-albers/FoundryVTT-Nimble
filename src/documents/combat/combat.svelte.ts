@@ -54,7 +54,10 @@ import {
 	setExpandedTurnIdentityHint,
 } from './expandedTurnIdentityStore.js';
 import {
+	buildAppendTurnHistoryUpdate,
+	buildClearTurnHistoryUpdate,
 	buildMarkActedUpdates,
+	buildPreviousTurnUnwindUpdate,
 	buildResetAllActedUpdates,
 	buildUnmarkActedUpdates,
 	buildZipperCombatFlagUpdate,
@@ -521,51 +524,6 @@ class NimbleCombat extends Combat {
 		}, []);
 		if (updates.length < 1) return;
 		await this.updateEmbeddedDocuments('Combatant', updates);
-	}
-
-	async #refillCharacterActionsForTurnStart(
-		combatant: Combatant.Implementation | null,
-	): Promise<void> {
-		if (!isBaneInspiredActionsEnabled()) return;
-		if (!combatant || combatant.type !== 'character') return;
-
-		const combatantId = combatant.id;
-		if (!combatantId) return;
-
-		const pipTypes = getCombatantPipTypes(combatant);
-		const pipActiveStates = getCombatantPipActiveStates(combatant);
-		const update: Record<string, unknown> = { _id: combatantId };
-		let activeCount = 0;
-		let hasChanges = false;
-
-		for (let i = 0; i < 3; i++) {
-			const isActive = pipActiveStates[i] ?? false;
-			const pipType = pipTypes[i] ?? 'standard';
-
-			if (isActive && pipType !== 'standard') {
-				activeCount++;
-			} else {
-				if (pipType !== 'standard') {
-					update[`system.actions.base.pipType${i}`] = 'standard';
-					hasChanges = true;
-				}
-				if (!isActive) {
-					update[`system.actions.base.pipActive${i}`] = true;
-					hasChanges = true;
-				}
-				activeCount++;
-			}
-		}
-
-		const currentActions = getCombatantCurrentActions(combatant);
-		if (currentActions !== activeCount) {
-			update['system.actions.base.current'] = activeCount;
-			hasChanges = true;
-		}
-
-		if (hasChanges) {
-			await this.updateEmbeddedDocuments('Combatant', [update]);
-		}
 	}
 
 	async #resetCharacterPipTypesForNewRound(): Promise<void> {
@@ -1343,9 +1301,6 @@ class NimbleCombat extends Combat {
 			await this.#persistAtomicTurnState({ turn: this.turn });
 		}
 
-		// Combat Readiness: refill actions for the combatant whose turn is starting
-		await this.#refillCharacterActionsForTurnStart(this.combatant ?? null);
-
 		return result;
 	}
 
@@ -1422,13 +1377,14 @@ class NimbleCombat extends Combat {
 				await this.updateEmbeddedDocuments('Combatant', resetUpdates);
 			}
 			const { roundStartSide } = this.#readZipperFlags();
-			await this.update(
-				buildZipperCombatFlagUpdate({
+			await this.update({
+				...buildZipperCombatFlagUpdate({
 					currentSide: roundStartSide,
 					awaitingSelection: true,
 					actCounter: 0,
-				}) as Parameters<Combat['update']>[0],
-			);
+				}),
+				...buildClearTurnHistoryUpdate(),
+			} as Parameters<Combat['update']>[0]);
 			this.turns = this.setupTurns();
 			this.#syncTurnIndexWithAliveTurns();
 		}
@@ -1452,6 +1408,13 @@ class NimbleCombat extends Combat {
 	}
 
 	override async previousTurn(): Promise<this> {
+		// Zipper initiative: unwind the active combatant's turn instead of the
+		// standard previousTurn flow. After unwinding, the combatant is no
+		// longer "acted" and the combat re-enters selection mode on their side.
+		if (isZipperInitiativeActive()) {
+			return this.#zipperPreviousTurn();
+		}
+
 		this.#syncTurnIndexWithAliveTurns();
 		const preferredPreviousTurnIdentity = this.#resolvePreviousTurnIdentity();
 		const { intercepted, result } = await this.#runAtomicTurnStateOperation(
@@ -1466,6 +1429,27 @@ class NimbleCombat extends Combat {
 		}
 		await this.#restoreNonCharacterTurnState(this.combatant ?? null);
 		return result;
+	}
+
+	async #zipperPreviousTurn(): Promise<this> {
+		const activeCombatant = this.combatant ?? null;
+		// If nothing has happened yet this round, there's nothing to unwind.
+		if (!activeCombatant || getZipperActCounter(this) === 0) {
+			return this as this;
+		}
+
+		const { combatFlags, combatantUpdates } = buildPreviousTurnUnwindUpdate(this, activeCombatant);
+		if (combatantUpdates.length > 0) {
+			await this.updateEmbeddedDocuments('Combatant', combatantUpdates);
+		}
+		await this.update(combatFlags as Parameters<Combat['update']>[0]);
+
+		// Rebuild turns so the previously-acted combatant moves back to the
+		// upcoming section.
+		this.turns = this.setupTurns();
+		this.#syncTurnIndexWithAliveTurns();
+
+		return this as this;
 	}
 
 	override async previousRound(): Promise<this> {
@@ -1512,8 +1496,15 @@ class NimbleCombat extends Combat {
 	/**
 	 * Select a combatant to take their turn in zipper initiative mode.
 	 * Called when a player clicks their token overlay or the GM selects an enemy.
+	 *
+	 * @param options.groupCombatantIds — pass when selecting a GM-shift-click group
+	 *   so the turn history records one grouped entry (including the leader and
+	 *   followers) instead of a single-combatant entry.
 	 */
-	async selectZipperCombatant(combatantId: string): Promise<void> {
+	async selectZipperCombatant(
+		combatantId: string,
+		options?: { groupCombatantIds?: string[] },
+	): Promise<void> {
 		if (!isZipperInitiativeActive()) return;
 
 		const currentSide = getZipperCurrentSide(this);
@@ -1535,20 +1526,30 @@ class NimbleCombat extends Combat {
 			this.#resolveTurnIdentityAtIndex(this.turns, targetIndex) ?? turnIdentity,
 		);
 
-		// Persist the turn index, awaitingSelection flag, and turn identity in a
-		// single update. Bypass #runAtomicTurnStateOperation and the update override
-		// by calling super.update directly — the values are already fully resolved
-		// and the override's re-resolution can fight with our intent.
+		// Build the turn history entry. actOrder mirrors the value buildMarkActedUpdates
+		// will assign at turn end — both are "next sequential position" relative to the
+		// current actCounter.
+		const groupIds = options?.groupCombatantIds;
+		const isGroup = Array.isArray(groupIds) && groupIds.length > 1;
+		const historyEntry = {
+			combatantId,
+			side: currentSide,
+			actOrder: getZipperActCounter(this) + 1,
+			...(isGroup ? { isGroup: true, groupCombatantIds: groupIds } : {}),
+		};
+
+		// Persist the turn index, awaitingSelection flag, turn identity, and history
+		// entry in a single update. Bypass #runAtomicTurnStateOperation and the update
+		// override by calling super.update directly — the values are already fully
+		// resolved and the override's re-resolution can fight with our intent.
 		await super.update({
 			turn: targetIndex,
 			...buildZipperCombatFlagUpdate({ awaitingSelection: false }),
 			...buildExpandedTurnIdentityUpdate(
 				this.#resolveTurnIdentityAtIndex(this.turns, targetIndex) ?? turnIdentity,
 			),
+			...buildAppendTurnHistoryUpdate(this, historyEntry),
 		} as Parameters<Combat['update']>[0]);
-
-		// Combat Readiness: refill actions for the combatant whose turn is starting
-		await this.#refillCharacterActionsForTurnStart(this.combatant ?? null);
 	}
 
 	/**
@@ -1616,8 +1617,9 @@ class NimbleCombat extends Combat {
 			buildZipperCombatFlagUpdate({ actCounter: nextCounter }) as Parameters<Combat['update']>[0],
 		);
 
-		// Now select the leader as the active combatant for this turn
-		await this.selectZipperCombatant(leaderId);
+		// Now select the leader as the active combatant for this turn, recording a
+		// single grouped history entry that covers the leader and all followers.
+		await this.selectZipperCombatant(leaderId, { groupCombatantIds: uniqueIds });
 	}
 
 	/**

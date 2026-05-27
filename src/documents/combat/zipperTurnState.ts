@@ -21,9 +21,23 @@ const ZIPPER_CURRENT_SIDE_PATH = `${ZIPPER_FLAG_ROOT}.currentSide`;
 const ZIPPER_ROUND_START_SIDE_PATH = `${ZIPPER_FLAG_ROOT}.roundStartSide`;
 const ZIPPER_AWAITING_SELECTION_PATH = `${ZIPPER_FLAG_ROOT}.awaitingSelection`;
 const ZIPPER_ACT_COUNTER_PATH = `${ZIPPER_FLAG_ROOT}.actCounter`;
+const ZIPPER_TURN_HISTORY_PATH = `${ZIPPER_FLAG_ROOT}.turnHistory`;
 
 const ZIPPER_TURN_ACTED_PATH = 'system.zipperTurn.acted';
 const ZIPPER_TURN_ACT_ORDER_PATH = 'system.zipperTurn.actOrder';
+
+// ---------------------------------------------------------------------------
+// Turn history entry shape
+// ---------------------------------------------------------------------------
+
+export type TurnHistoryEntry = {
+	combatantId: string;
+	side: ZipperSide;
+	actOrder: number;
+	undone: boolean;
+	isGroup?: boolean;
+	groupCombatantIds?: string[];
+};
 
 // ---------------------------------------------------------------------------
 // Feature gate
@@ -331,4 +345,88 @@ export function canSelectCombatantForZipperTurn(
 		return { valid: false, reason: 'hesitantBlocked' };
 	}
 	return { valid: true };
+}
+
+// ---------------------------------------------------------------------------
+// Turn history (Feature 4)
+// ---------------------------------------------------------------------------
+
+export function getTurnHistory(combat: Combat): TurnHistoryEntry[] {
+	const value = getFlagValue(combat, ZIPPER_TURN_HISTORY_PATH);
+	return Array.isArray(value) ? (value as TurnHistoryEntry[]) : [];
+}
+
+export function buildAppendTurnHistoryUpdate(
+	combat: Combat,
+	entry: Omit<TurnHistoryEntry, 'undone'>,
+): Record<string, unknown> {
+	const existing = getTurnHistory(combat);
+	const newEntry: TurnHistoryEntry = { ...entry, undone: false };
+	return { [ZIPPER_TURN_HISTORY_PATH]: [...existing, newEntry] };
+}
+
+/**
+ * Mark the last NOT-already-undone entry as undone. Returns null if history is
+ * empty or every entry is already undone (nothing to undo).
+ */
+export function buildMarkLastTurnUndoneUpdate(combat: Combat): Record<string, unknown> | null {
+	const existing = getTurnHistory(combat);
+	if (existing.length === 0) return null;
+
+	// Find the rightmost not-undone entry.
+	let targetIndex = -1;
+	for (let i = existing.length - 1; i >= 0; i--) {
+		if (!existing[i].undone) {
+			targetIndex = i;
+			break;
+		}
+	}
+	if (targetIndex < 0) return null;
+
+	const next = existing.map((entry, index) =>
+		index === targetIndex ? { ...entry, undone: true } : entry,
+	);
+	return { [ZIPPER_TURN_HISTORY_PATH]: next };
+}
+
+export function buildClearTurnHistoryUpdate(): Record<string, unknown> {
+	return { [ZIPPER_TURN_HISTORY_PATH]: [] };
+}
+
+// ---------------------------------------------------------------------------
+// Previous-turn unwind (Bug 1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the updates needed to reverse the zipper state for one turn:
+ * decrement the act counter, flip the current side back to the unwound
+ * combatant's side, re-enter awaiting-selection, mark the matching history
+ * entry as undone, and unmark the combatant (or its group) as acted.
+ *
+ * Returns an object split into `combatFlags` (single update against the combat)
+ * and `combatantUpdates` (array passed to updateEmbeddedDocuments('Combatant')).
+ */
+export function buildPreviousTurnUnwindUpdate(
+	combat: Combat,
+	combatant: Combatant.Implementation,
+): {
+	combatFlags: Record<string, unknown>;
+	combatantUpdates: Record<string, unknown>[];
+} {
+	const nextActCounter = Math.max(0, getZipperActCounter(combat) - 1);
+	const side = getCombatantZipperSide(combatant);
+
+	const combatFlags: Record<string, unknown> = {
+		[ZIPPER_ACT_COUNTER_PATH]: nextActCounter,
+		[ZIPPER_AWAITING_SELECTION_PATH]: true,
+		[ZIPPER_CURRENT_SIDE_PATH]: side,
+	};
+
+	const historyUpdate = buildMarkLastTurnUndoneUpdate(combat);
+	if (historyUpdate) Object.assign(combatFlags, historyUpdate);
+
+	const combatantId = combatant.id ?? '';
+	const combatantUpdates = combatantId ? buildUnmarkActedUpdates(combat, combatantId) : [];
+
+	return { combatFlags, combatantUpdates };
 }
