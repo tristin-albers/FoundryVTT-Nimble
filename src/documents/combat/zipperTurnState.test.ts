@@ -354,7 +354,45 @@ describe('buildPreviousTurnUnwindUpdate — in-progress unwind (turnEnded: false
 	});
 });
 
-describe('buildPreviousTurnUnwindUpdate — group unwind', () => {
+describe('buildPreviousTurnUnwindUpdate — group in-progress unwind (turnEnded: false)', () => {
+	it('decrements actCounter by followers.length only (leader was never bumped)', () => {
+		// selectZipperGroup marked 2 followers acted (counter +2) before selectZipperCombatant
+		// ran for the leader. Leader's turn is in progress (not yet ended).
+		const leader = makeHostileNpc('npc-lead');
+		const follower1 = makeHostileNpc('npc-f1');
+		const follower2 = makeHostileNpc('npc-f2');
+		const combat = makeCombat({
+			actCounter: 2, // bumped by 2 followers
+			combatants: [leader, follower1, follower2],
+		});
+		const entry = groupEntry('npc-lead', 'gm', 3, ['npc-lead', 'npc-f1', 'npc-f2']);
+		const result = buildPreviousTurnUnwindUpdate(combat as never, entry, { turnEnded: false });
+		expect(result.combatFlags['flags.nimble.zipper.actCounter']).toBe(0);
+	});
+
+	it('unmarks ONLY the followers (leader was never marked acted in-progress)', () => {
+		const leader = makeHostileNpc('npc-lead');
+		const follower1 = makeHostileNpc('npc-f1');
+		const follower2 = makeHostileNpc('npc-f2');
+		const combat = makeCombat({ actCounter: 2, combatants: [leader, follower1, follower2] });
+		const entry = groupEntry('npc-lead', 'gm', 3, ['npc-lead', 'npc-f1', 'npc-f2']);
+		const result = buildPreviousTurnUnwindUpdate(combat as never, entry, { turnEnded: false });
+		const ids = result.combatantUpdates.map((u) => u._id);
+		expect(ids).toEqual(expect.arrayContaining(['npc-f1', 'npc-f2']));
+		expect(ids).not.toContain('npc-lead');
+	});
+
+	it('does NOT flip currentSide (selectZipperCombatant never changed it)', () => {
+		const leader = makeHostileNpc('npc-lead');
+		const follower1 = makeHostileNpc('npc-f1');
+		const combat = makeCombat({ actCounter: 1, combatants: [leader, follower1] });
+		const entry = groupEntry('npc-lead', 'gm', 2, ['npc-lead', 'npc-f1']);
+		const result = buildPreviousTurnUnwindUpdate(combat as never, entry, { turnEnded: false });
+		expect(result.combatFlags['flags.nimble.zipper.currentSide']).toBeUndefined();
+	});
+});
+
+describe('buildPreviousTurnUnwindUpdate — group unwind (ended turn)', () => {
 	it('decrements actCounter by the group size, not by 1', () => {
 		const leader = makeHostileNpc('npc-lead');
 		const follower1 = makeHostileNpc('npc-f1');

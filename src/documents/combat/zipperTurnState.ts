@@ -454,12 +454,15 @@ export function buildClearTurnHistoryUpdate(): Record<string, unknown> {
  *   restore `currentSide` to the entry's side, unmark every member as acted,
  *   set `awaitingSelection: true`, and mark the entry undone.
  *
- * - **`turnEnded: false`** (in-progress case — the turn was selected via
- *   `selectZipperCombatant` but `_onEndTurn` has NOT fired yet, so the
- *   counter was never bumped and the combatant was never marked acted):
- *   only revert the selection (set `awaitingSelection: true`) and mark the
- *   history entry undone. Decrementing the counter or unmarking would
- *   corrupt state that was never set.
+ * - **`turnEnded: false`** (in-progress case). Two sub-cases:
+ *     - Single-combatant: selectZipperCombatant set `awaitingSelection: false`
+ *       and appended history, but didn't bump `actCounter` or mark acted —
+ *       only revert the selection signal.
+ *     - Group: `selectZipperGroup` marks the FOLLOWERS acted and bumps the
+ *       counter by `followers.length` BEFORE the leader's `selectZipperCombatant`
+ *       runs, so the leader is in-progress but followers are already committed.
+ *       Unwind reverses the follower commitments (unmarks them, decrements
+ *       counter by `followers.length`) while leaving the leader untouched.
  *
  * Returns an object split into `combatFlags` (single update against the
  * combat) and `combatantUpdates` (array passed to
@@ -480,30 +483,60 @@ export function buildPreviousTurnUnwindUpdate(
 	const historyUpdate = buildMarkLastTurnUndoneUpdate(combat);
 	if (historyUpdate) Object.assign(combatFlags, historyUpdate);
 
+	const isGroup =
+		entry.isGroup && Array.isArray(entry.groupCombatantIds) && entry.groupCombatantIds.length > 0;
+	const groupIds = isGroup ? (entry.groupCombatantIds as string[]) : [];
+
 	if (!options.turnEnded) {
-		// Selected-but-not-ended: revert only the selection signal. The counter,
-		// current side, and acted flags were never advanced by selectZipperCombatant.
+		if (isGroup && groupIds.length > 1) {
+			// Group in-progress: followers were marked acted by selectZipperGroup and
+			// the counter was bumped by followers.length. Reverse just those commitments.
+			const followerIds = groupIds.slice(1);
+			combatFlags[ZIPPER_ACT_COUNTER_PATH] = Math.max(
+				0,
+				getZipperActCounter(combat) - followerIds.length,
+			);
+			return {
+				combatFlags,
+				combatantUpdates: dedupeUnmarkActedUpdates(combat, followerIds),
+			};
+		}
+		// Single in-progress: nothing else to reverse.
 		return { combatFlags, combatantUpdates: [] };
 	}
 
-	// Ended turn: full unwind including counter, side flip back, and acted reversal.
-	const memberIds =
-		entry.isGroup && entry.groupCombatantIds && entry.groupCombatantIds.length > 0
-			? entry.groupCombatantIds
-			: [entry.combatantId];
-
+	// Ended turn: full unwind for the whole footprint (single or group).
+	const memberIds = isGroup ? groupIds : [entry.combatantId];
 	combatFlags[ZIPPER_ACT_COUNTER_PATH] = Math.max(
 		0,
 		getZipperActCounter(combat) - memberIds.length,
 	);
 	combatFlags[ZIPPER_CURRENT_SIDE_PATH] = entry.side;
 
-	const combatantUpdates: Record<string, unknown>[] = [];
-	for (const id of memberIds) {
-		const combatant = combat.combatants.get(id);
-		if (!combatant) continue;
-		combatantUpdates.push(...buildUnmarkActedUpdates(combat, id));
-	}
+	return {
+		combatFlags,
+		combatantUpdates: dedupeUnmarkActedUpdates(combat, memberIds),
+	};
+}
 
-	return { combatFlags, combatantUpdates };
+/**
+ * Build unmark-acted updates for a list of combatant ids, deduplicated by `_id`.
+ * `buildUnmarkActedUpdates` returns updates for the entire minion group of any
+ * member it's called with, so calling it once per id in `ids` can produce N
+ * copies of the same row when those ids share a minion group.
+ */
+function dedupeUnmarkActedUpdates(combat: Combat, ids: string[]): Record<string, unknown>[] {
+	const seen = new Set<string>();
+	const updates: Record<string, unknown>[] = [];
+	for (const id of ids) {
+		if (!combat.combatants.get(id)) continue;
+		for (const update of buildUnmarkActedUpdates(combat, id)) {
+			const targetId = update._id;
+			if (typeof targetId === 'string' && !seen.has(targetId)) {
+				seen.add(targetId);
+				updates.push(update);
+			}
+		}
+	}
+	return updates;
 }
