@@ -49,10 +49,6 @@ function makeCharacter(id: string): MinimalCombatantShape {
 	return { id, type: 'character' };
 }
 
-function makeFriendlyNpc(id: string): MinimalCombatantShape {
-	return { id, type: 'npc', token: { disposition: 1 } };
-}
-
 function makeHostileNpc(id: string): MinimalCombatantShape {
 	return { id, type: 'npc', token: { disposition: -1 } };
 }
@@ -210,55 +206,79 @@ describe('buildClearTurnHistoryUpdate', () => {
 
 // ---------------------------------------------------------------------------
 // Bug 1 — Unwind previous turn (decrement counter, restore selection state)
+//
+// Updated signature: takes the TurnHistoryEntry (source of truth for what was
+// done) plus a turnEnded flag distinguishing in-progress unwind from fully-
+// ended unwind.
 // ---------------------------------------------------------------------------
 
-describe('buildPreviousTurnUnwindUpdate', () => {
-	it('decrements actCounter on the combat', () => {
+function singleEntry(
+	combatantId: string,
+	side: 'player' | 'gm',
+	actOrder: number,
+): TurnHistoryEntry {
+	return { combatantId, side, actOrder, undone: false };
+}
+
+function groupEntry(
+	leaderId: string,
+	side: 'player' | 'gm',
+	actOrder: number,
+	memberIds: string[],
+): TurnHistoryEntry {
+	return {
+		combatantId: leaderId,
+		side,
+		actOrder,
+		undone: false,
+		isGroup: true,
+		groupCombatantIds: memberIds,
+	};
+}
+
+describe('buildPreviousTurnUnwindUpdate — ended-turn unwind (turnEnded: true)', () => {
+	it('decrements actCounter by 1 for a single-combatant entry', () => {
 		const character = makeCharacter('c1');
 		const combat = makeCombat({ actCounter: 3, combatants: [character] });
-		const result = buildPreviousTurnUnwindUpdate(combat as never, character as never);
+		const result = buildPreviousTurnUnwindUpdate(combat as never, singleEntry('c1', 'player', 3), {
+			turnEnded: true,
+		});
 		expect(result.combatFlags['flags.nimble.zipper.actCounter']).toBe(2);
 	});
 
 	it('clamps actCounter at 0 (does not go negative)', () => {
 		const character = makeCharacter('c1');
 		const combat = makeCombat({ actCounter: 0, combatants: [character] });
-		const result = buildPreviousTurnUnwindUpdate(combat as never, character as never);
+		const result = buildPreviousTurnUnwindUpdate(combat as never, singleEntry('c1', 'player', 1), {
+			turnEnded: true,
+		});
 		expect(result.combatFlags['flags.nimble.zipper.actCounter']).toBe(0);
 	});
 
 	it('sets awaitingSelection back to true', () => {
 		const character = makeCharacter('c1');
 		const combat = makeCombat({ actCounter: 1, combatants: [character] });
-		const result = buildPreviousTurnUnwindUpdate(combat as never, character as never);
+		const result = buildPreviousTurnUnwindUpdate(combat as never, singleEntry('c1', 'player', 1), {
+			turnEnded: true,
+		});
 		expect(result.combatFlags['flags.nimble.zipper.awaitingSelection']).toBe(true);
 	});
 
-	it('sets currentSide to the player side when the unwound combatant is a character', () => {
-		const character = makeCharacter('c1');
-		const combat = makeCombat({ actCounter: 1, combatants: [character] });
-		const result = buildPreviousTurnUnwindUpdate(combat as never, character as never);
-		expect(result.combatFlags['flags.nimble.zipper.currentSide']).toBe('player');
-	});
-
-	it('sets currentSide to the gm side when the unwound combatant is a hostile NPC', () => {
+	it("restores currentSide to the entry's side", () => {
 		const npc = makeHostileNpc('npc1');
 		const combat = makeCombat({ actCounter: 1, combatants: [npc] });
-		const result = buildPreviousTurnUnwindUpdate(combat as never, npc as never);
+		const result = buildPreviousTurnUnwindUpdate(combat as never, singleEntry('npc1', 'gm', 1), {
+			turnEnded: true,
+		});
 		expect(result.combatFlags['flags.nimble.zipper.currentSide']).toBe('gm');
-	});
-
-	it('sets currentSide to the player side when the unwound combatant is a friendly NPC', () => {
-		const friendly = makeFriendlyNpc('npc1');
-		const combat = makeCombat({ actCounter: 1, combatants: [friendly] });
-		const result = buildPreviousTurnUnwindUpdate(combat as never, friendly as never);
-		expect(result.combatFlags['flags.nimble.zipper.currentSide']).toBe('player');
 	});
 
 	it('returns combatant updates that unmark the combatant as acted', () => {
 		const character = makeCharacter('c1');
 		const combat = makeCombat({ actCounter: 1, combatants: [character] });
-		const result = buildPreviousTurnUnwindUpdate(combat as never, character as never);
+		const result = buildPreviousTurnUnwindUpdate(combat as never, singleEntry('c1', 'player', 1), {
+			turnEnded: true,
+		});
 		expect(result.combatantUpdates).toEqual(
 			expect.arrayContaining([
 				expect.objectContaining({
@@ -272,11 +292,11 @@ describe('buildPreviousTurnUnwindUpdate', () => {
 
 	it('marks the last history entry as undone when history exists', () => {
 		const character = makeCharacter('c1');
-		const history: TurnHistoryEntry[] = [
-			{ combatantId: 'c1', side: 'player', actOrder: 1, undone: false },
-		];
+		const history: TurnHistoryEntry[] = [singleEntry('c1', 'player', 1)];
 		const combat = makeCombat({ actCounter: 1, turnHistory: history, combatants: [character] });
-		const result = buildPreviousTurnUnwindUpdate(combat as never, character as never);
+		const result = buildPreviousTurnUnwindUpdate(combat as never, singleEntry('c1', 'player', 1), {
+			turnEnded: true,
+		});
 		expect(result.combatFlags['flags.nimble.zipper.turnHistory']).toEqual([
 			{ combatantId: 'c1', side: 'player', actOrder: 1, undone: true },
 		]);
@@ -285,7 +305,90 @@ describe('buildPreviousTurnUnwindUpdate', () => {
 	it('does not include a turnHistory update when history is empty', () => {
 		const character = makeCharacter('c1');
 		const combat = makeCombat({ actCounter: 1, combatants: [character] });
-		const result = buildPreviousTurnUnwindUpdate(combat as never, character as never);
+		const result = buildPreviousTurnUnwindUpdate(combat as never, singleEntry('c1', 'player', 1), {
+			turnEnded: true,
+		});
 		expect(result.combatFlags['flags.nimble.zipper.turnHistory']).toBeUndefined();
+	});
+});
+
+describe('buildPreviousTurnUnwindUpdate — in-progress unwind (turnEnded: false)', () => {
+	it('does NOT decrement actCounter (it was never bumped for an in-progress turn)', () => {
+		const character = makeCharacter('c1');
+		const combat = makeCombat({ actCounter: 3, combatants: [character] });
+		const result = buildPreviousTurnUnwindUpdate(combat as never, singleEntry('c1', 'player', 4), {
+			turnEnded: false,
+		});
+		expect(result.combatFlags['flags.nimble.zipper.actCounter']).toBeUndefined();
+	});
+
+	it('does NOT flip currentSide (selectZipperCombatant never changed it)', () => {
+		const character = makeCharacter('c1');
+		const combat = makeCombat({ actCounter: 3, combatants: [character] });
+		const result = buildPreviousTurnUnwindUpdate(combat as never, singleEntry('c1', 'player', 4), {
+			turnEnded: false,
+		});
+		expect(result.combatFlags['flags.nimble.zipper.currentSide']).toBeUndefined();
+	});
+
+	it('does NOT include combatant updates (combatant was never marked acted)', () => {
+		const character = makeCharacter('c1');
+		const combat = makeCombat({ actCounter: 3, combatants: [character] });
+		const result = buildPreviousTurnUnwindUpdate(combat as never, singleEntry('c1', 'player', 4), {
+			turnEnded: false,
+		});
+		expect(result.combatantUpdates).toEqual([]);
+	});
+
+	it('still reverts awaitingSelection and marks history entry undone', () => {
+		const character = makeCharacter('c1');
+		const history: TurnHistoryEntry[] = [singleEntry('c1', 'player', 1)];
+		const combat = makeCombat({ actCounter: 3, turnHistory: history, combatants: [character] });
+		const result = buildPreviousTurnUnwindUpdate(combat as never, singleEntry('c1', 'player', 1), {
+			turnEnded: false,
+		});
+		expect(result.combatFlags['flags.nimble.zipper.awaitingSelection']).toBe(true);
+		expect(result.combatFlags['flags.nimble.zipper.turnHistory']).toEqual([
+			{ combatantId: 'c1', side: 'player', actOrder: 1, undone: true },
+		]);
+	});
+});
+
+describe('buildPreviousTurnUnwindUpdate — group unwind', () => {
+	it('decrements actCounter by the group size, not by 1', () => {
+		const leader = makeHostileNpc('npc-lead');
+		const follower1 = makeHostileNpc('npc-f1');
+		const follower2 = makeHostileNpc('npc-f2');
+		const combat = makeCombat({
+			actCounter: 5,
+			combatants: [leader, follower1, follower2],
+		});
+		const entry = groupEntry('npc-lead', 'gm', 5, ['npc-lead', 'npc-f1', 'npc-f2']);
+		const result = buildPreviousTurnUnwindUpdate(combat as never, entry, { turnEnded: true });
+		expect(result.combatFlags['flags.nimble.zipper.actCounter']).toBe(2);
+	});
+
+	it('unmarks every group member as acted', () => {
+		const leader = makeHostileNpc('npc-lead');
+		const follower1 = makeHostileNpc('npc-f1');
+		const follower2 = makeHostileNpc('npc-f2');
+		const combat = makeCombat({ actCounter: 3, combatants: [leader, follower1, follower2] });
+		const entry = groupEntry('npc-lead', 'gm', 3, ['npc-lead', 'npc-f1', 'npc-f2']);
+		const result = buildPreviousTurnUnwindUpdate(combat as never, entry, { turnEnded: true });
+		const ids = result.combatantUpdates.map((u) => u._id);
+		expect(ids).toEqual(expect.arrayContaining(['npc-lead', 'npc-f1', 'npc-f2']));
+	});
+
+	it('skips group members that no longer exist in combat (defensive)', () => {
+		const leader = makeHostileNpc('npc-lead');
+		const combat = makeCombat({ actCounter: 3, combatants: [leader] });
+		// followers were removed/died; entry still references them
+		const entry = groupEntry('npc-lead', 'gm', 3, ['npc-lead', 'npc-removed']);
+		const result = buildPreviousTurnUnwindUpdate(combat as never, entry, { turnEnded: true });
+		const ids = result.combatantUpdates.map((u) => u._id);
+		expect(ids).toContain('npc-lead');
+		expect(ids).not.toContain('npc-removed');
+		// counter still decrements by group size — the entry recorded that footprint
+		expect(result.combatFlags['flags.nimble.zipper.actCounter']).toBe(1);
 	});
 });

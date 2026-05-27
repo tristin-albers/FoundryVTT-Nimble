@@ -87,6 +87,23 @@
 	let zipperIsLastOnSide = $derived(
 		isZipperMode && zipperAwaitingSelection && zipperSideStats[zipperCurrentSide].unacted === 1,
 	);
+	// Feature 4 (current marker) — the in-progress entry is the last non-undone
+	// history entry whose combatant has NOT yet been marked acted. Rendered with
+	// a distinct style so the tracker shows completed / undone / current.
+	let zipperCurrentHistoryKey = $derived.by<string | null>(() => {
+		if (!isZipperMode || !currentCombat) return null;
+		if (zipperAwaitingSelection) return null;
+		for (let i = zipperTurnHistory.length - 1; i >= 0; i--) {
+			const entry = zipperTurnHistory[i];
+			if (entry.undone) continue;
+			const combatant = currentCombat.combatants.get(entry.combatantId);
+			if (combatant && !hasZipperActed(combatant)) {
+				return `${entry.actOrder}-${entry.combatantId}`;
+			}
+			return null;
+		}
+		return null;
+	});
 	let zipperOverflow = $derived(trackerViewState.zipperOverflow);
 	const handleZipperToggleActed = trackerViewState.handleZipperToggleActed;
 	const handleZipperCardSelect = trackerViewState.handleZipperCardSelect;
@@ -414,14 +431,19 @@
 								(entry.isGroup
 									? localizeWithFallback('NIMBLE.zipperInitiative.groupTurn', 'Group')
 									: '?')}
+							{@const entryKey = `${entry.actOrder}-${entry.combatantId}`}
+							{@const isCurrent = !entry.undone && entryKey === zipperCurrentHistoryKey}
 							<li
 								class="nimble-ct__zipper-turn-history-entry"
 								class:nimble-ct__zipper-turn-history-entry--player={entry.side === 'player'}
 								class:nimble-ct__zipper-turn-history-entry--gm={entry.side === 'gm'}
 								class:nimble-ct__zipper-turn-history-entry--undone={entry.undone}
+								class:nimble-ct__zipper-turn-history-entry--current={isCurrent}
 								data-tooltip={entry.undone
 									? `${entry.actOrder}. ${historyName} (undone)`
-									: `${entry.actOrder}. ${historyName}`}
+									: isCurrent
+										? `${entry.actOrder}. ${historyName} (current turn)`
+										: `${entry.actOrder}. ${historyName}`}
 							>
 								<span class="nimble-ct__zipper-turn-history-order">{entry.actOrder}</span>
 								<span class="nimble-ct__zipper-turn-history-name">{historyName}</span>
@@ -3050,6 +3072,12 @@
 	.nimble-ct__zipper-turn-history-entry--undone {
 		opacity: 0.45;
 		text-decoration: line-through;
+	}
+	.nimble-ct__zipper-turn-history-entry--current {
+		background: color-mix(in srgb, hsl(45 90% 25%) 85%, transparent);
+		border-color: color-mix(in srgb, hsl(45 90% 55%) 80%, transparent);
+		color: hsl(45 95% 88%);
+		box-shadow: 0 0 0 1px color-mix(in srgb, hsl(45 90% 55%) 50%, transparent);
 	}
 	.nimble-ct__zipper-turn-history-order {
 		font-variant-numeric: tabular-nums;

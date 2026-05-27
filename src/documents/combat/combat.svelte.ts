@@ -63,6 +63,7 @@ import {
 	buildZipperCombatFlagUpdate,
 	canSelectCombatantForZipperTurn,
 	determineFirstSide,
+	getTurnHistory,
 	getUnactedCombatantsForSide,
 	getZipperActCounter,
 	getZipperCurrentSide,
@@ -71,6 +72,7 @@ import {
 	isZipperAwaitingSelection,
 	isZipperInitiativeActive,
 	resolveNextSide,
+	type TurnHistoryEntry,
 } from './zipperTurnState.js';
 
 const COMBATANT_FALLBACK_KEY = Symbol('nimbleCombatantFallback');
@@ -1432,13 +1434,34 @@ class NimbleCombat extends Combat {
 	}
 
 	async #zipperPreviousTurn(): Promise<this> {
-		const activeCombatant = this.combatant ?? null;
-		// If nothing has happened yet this round, there's nothing to unwind.
-		if (!activeCombatant || getZipperActCounter(this) === 0) {
-			return this as this;
+		// The turn history is the source of truth for "what was the last turn
+		// taken?". Using this.combatant alone is unreliable because the active
+		// combatant changes across selectZipperCombatant → _onEndTurn boundaries,
+		// and GM shift-click group turns put the leader in this.combatant but
+		// the followers need unwinding too.
+		const history = getTurnHistory(this);
+		let lastEntry: TurnHistoryEntry | null = null;
+		for (let i = history.length - 1; i >= 0; i--) {
+			if (!history[i].undone) {
+				lastEntry = history[i];
+				break;
+			}
 		}
+		if (!lastEntry) return this as this;
 
-		const { combatFlags, combatantUpdates } = buildPreviousTurnUnwindUpdate(this, activeCombatant);
+		const entryCombatant = this.combatants.get(lastEntry.combatantId);
+		if (!entryCombatant) return this as this;
+
+		// Distinguish "selected but turn not yet ended" from "turn fully ended".
+		// In the former, selectZipperCombatant set awaitingSelection=false and
+		// appended history, but neither bumped actCounter nor marked acted.
+		// In the latter, _onEndTurn / #zipperNextTurn did both of those, so the
+		// full unwind has to reverse them.
+		const turnEnded = hasZipperActed(entryCombatant);
+
+		const { combatFlags, combatantUpdates } = buildPreviousTurnUnwindUpdate(this, lastEntry, {
+			turnEnded,
+		});
 		if (combatantUpdates.length > 0) {
 			await this.updateEmbeddedDocuments('Combatant', combatantUpdates);
 		}

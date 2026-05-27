@@ -442,35 +442,68 @@ export function buildClearTurnHistoryUpdate(): Record<string, unknown> {
 // ---------------------------------------------------------------------------
 
 /**
- * Build the updates needed to reverse the zipper state for one turn:
- * decrement the act counter, flip the current side back to the unwound
- * combatant's side, re-enter awaiting-selection, mark the matching history
- * entry as undone, and unmark the combatant (or its group) as acted.
+ * Build the updates needed to reverse one turn in zipper mode. Uses the
+ * matching turn history entry as the source of truth (not `combat.combatant`)
+ * so the unwind is correct even after the active combatant has changed.
  *
- * Returns an object split into `combatFlags` (single update against the combat)
- * and `combatantUpdates` (array passed to updateEmbeddedDocuments('Combatant')).
+ * Two distinct cases:
+ *
+ * - **`turnEnded: true`** (the standard case — `_onEndTurn` already ran for
+ *   the entry's combatant): decrement `actCounter` by the entry's footprint
+ *   (1 for a single, `groupCombatantIds.length` for a GM-shift-click group),
+ *   restore `currentSide` to the entry's side, unmark every member as acted,
+ *   set `awaitingSelection: true`, and mark the entry undone.
+ *
+ * - **`turnEnded: false`** (in-progress case — the turn was selected via
+ *   `selectZipperCombatant` but `_onEndTurn` has NOT fired yet, so the
+ *   counter was never bumped and the combatant was never marked acted):
+ *   only revert the selection (set `awaitingSelection: true`) and mark the
+ *   history entry undone. Decrementing the counter or unmarking would
+ *   corrupt state that was never set.
+ *
+ * Returns an object split into `combatFlags` (single update against the
+ * combat) and `combatantUpdates` (array passed to
+ * `updateEmbeddedDocuments('Combatant')`).
  */
 export function buildPreviousTurnUnwindUpdate(
 	combat: Combat,
-	combatant: Combatant.Implementation,
+	entry: TurnHistoryEntry,
+	options: { turnEnded: boolean } = { turnEnded: true },
 ): {
 	combatFlags: Record<string, unknown>;
 	combatantUpdates: Record<string, unknown>[];
 } {
-	const nextActCounter = Math.max(0, getZipperActCounter(combat) - 1);
-	const side = getCombatantZipperSide(combatant);
-
 	const combatFlags: Record<string, unknown> = {
-		[ZIPPER_ACT_COUNTER_PATH]: nextActCounter,
 		[ZIPPER_AWAITING_SELECTION_PATH]: true,
-		[ZIPPER_CURRENT_SIDE_PATH]: side,
 	};
 
 	const historyUpdate = buildMarkLastTurnUndoneUpdate(combat);
 	if (historyUpdate) Object.assign(combatFlags, historyUpdate);
 
-	const combatantId = combatant.id ?? '';
-	const combatantUpdates = combatantId ? buildUnmarkActedUpdates(combat, combatantId) : [];
+	if (!options.turnEnded) {
+		// Selected-but-not-ended: revert only the selection signal. The counter,
+		// current side, and acted flags were never advanced by selectZipperCombatant.
+		return { combatFlags, combatantUpdates: [] };
+	}
+
+	// Ended turn: full unwind including counter, side flip back, and acted reversal.
+	const memberIds =
+		entry.isGroup && entry.groupCombatantIds && entry.groupCombatantIds.length > 0
+			? entry.groupCombatantIds
+			: [entry.combatantId];
+
+	combatFlags[ZIPPER_ACT_COUNTER_PATH] = Math.max(
+		0,
+		getZipperActCounter(combat) - memberIds.length,
+	);
+	combatFlags[ZIPPER_CURRENT_SIDE_PATH] = entry.side;
+
+	const combatantUpdates: Record<string, unknown>[] = [];
+	for (const id of memberIds) {
+		const combatant = combat.combatants.get(id);
+		if (!combatant) continue;
+		combatantUpdates.push(...buildUnmarkActedUpdates(combat, id));
+	}
 
 	return { combatFlags, combatantUpdates };
 }
