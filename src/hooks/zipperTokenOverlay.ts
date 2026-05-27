@@ -1,6 +1,7 @@
 import { SYSTEM_PATH } from '#system';
 import {
 	getCombatantZipperSide,
+	getUnactedCombatantsForSide,
 	getZipperActCounter,
 	getZipperCurrentSide,
 	hasZipperActed,
@@ -22,6 +23,7 @@ const ZIPPER_OVERLAY_CLICK_KEY = '_nimbleZipperSelectionClickHandler';
 const ZIPPER_PULSE_KEY = '_nimbleZipperPulseRing';
 const ZIPPER_MULTI_SELECT_KEY = '_nimbleZipperMultiSelected';
 const ZIPPER_HIT_TARGET_KEY = '_nimbleZipperHitTarget';
+const ZIPPER_TOOLTIP_KEY = '_nimbleZipperTooltip';
 
 // Resting opacity for the swords overlay; brightens to full (1.0) on hover.
 const ZIPPER_OVERLAY_RESTING_ALPHA = 0.6;
@@ -38,6 +40,7 @@ type TokenWithZipperOverlay = Token & {
 	[ZIPPER_PULSE_KEY]?: PIXI.Graphics | null;
 	[ZIPPER_HIT_TARGET_KEY]?: PIXI.Container | null;
 	[ZIPPER_MULTI_SELECT_KEY]?: boolean;
+	[ZIPPER_TOOLTIP_KEY]?: PIXI.Container | null;
 };
 
 let didRegisterZipperTokenOverlay = false;
@@ -100,6 +103,9 @@ interface EligibleTokenInfo {
 	combatantId: string;
 	hesitantBlocked: boolean;
 	side: 'player' | 'gm';
+	/** True when this combatant is the last eligible on their side — selecting
+	 *  will pass the turn to the other side (Feature 7 end-of-side telegraph). */
+	isLastOnSide: boolean;
 }
 
 function buildEligibleTokenIds(): Map<string, EligibleTokenInfo> {
@@ -150,7 +156,18 @@ function buildEligibleTokenIds(): Map<string, EligibleTokenInfo> {
 				combatantId: combatant.id,
 				hesitantBlocked: isHesitantBlocked(combat, combatant.id),
 				side: getCombatantZipperSide(combatant),
+				isLastOnSide: false, // filled in below once we know the total
 			});
+		}
+	}
+
+	// Feature 7 — last-on-side telegraph. Use the canonical unacted-on-side
+	// count (which dedupes minion groups) rather than the eligible-map size,
+	// since the map is filtered by ownership and may show fewer to a player.
+	const unactedOnCurrentSide = getUnactedCombatantsForSide(combat, currentSide).length;
+	if (unactedOnCurrentSide === 1) {
+		for (const info of eligibleMap.values()) {
+			if (info.side === currentSide) info.isLastOnSide = true;
 		}
 	}
 
@@ -188,6 +205,49 @@ function removeOverlay(token: TokenWithZipperOverlay): void {
 		hitTarget.destroy({ children: true });
 		token[ZIPPER_HIT_TARGET_KEY] = null;
 	}
+
+	hideHesitantTooltip(token);
+}
+
+/**
+ * Feature 5 — show a small PIXI text overlay near the badge explaining why a
+ * hesitant combatant can't be selected. Cleaned up on pointerout / overlay
+ * removal. PIXI rather than DOM tooltip because the badge lives on the canvas.
+ */
+function showHesitantTooltip(token: TokenWithZipperOverlay, badgeX: number, badgeY: number): void {
+	hideHesitantTooltip(token);
+	const text =
+		game.i18n?.localize?.('NIMBLE.zipperInitiative.hesitantBlocked') ??
+		'Hesitant heroes must wait for non-hesitant heroes to act first';
+
+	const label = new PIXI.Text(text, {
+		fontFamily: 'Signika, sans-serif',
+		fontSize: 14,
+		fontWeight: '600',
+		fill: 0xfde68a,
+		stroke: 0x000000,
+		strokeThickness: 4,
+		align: 'center',
+		wordWrap: true,
+		wordWrapWidth: 280,
+	});
+	const renderer = canvas?.app?.renderer as { resolution?: number } | undefined;
+	label.resolution = Math.max(2, Number(renderer?.resolution ?? 2));
+	label.roundPixels = true;
+	label.anchor.set(0.5, 1);
+	// Position above the badge with a small gap.
+	label.position.set(badgeX, badgeY - 24);
+	token.addChild(label);
+	token[ZIPPER_TOOLTIP_KEY] = label;
+}
+
+function hideHesitantTooltip(token: TokenWithZipperOverlay): void {
+	const tooltip = token[ZIPPER_TOOLTIP_KEY];
+	if (tooltip) {
+		tooltip.parent?.removeChild(tooltip);
+		tooltip.destroy();
+		token[ZIPPER_TOOLTIP_KEY] = null;
+	}
 }
 
 /**
@@ -217,6 +277,7 @@ function createOverlay(
 	combatantId: string,
 	hesitantBlocked = false,
 	side: 'player' | 'gm' = 'player',
+	isLastOnSide = false,
 ): void {
 	removeOverlay(token);
 
@@ -228,13 +289,26 @@ function createOverlay(
 	container.eventMode = 'none';
 	container.zIndex = 1020;
 
-	const tokenHeight = Math.max(1, Number(token.h ?? tokenSize));
-	const centerX = Math.round(tokenSize / 2);
-	const centerY = Math.round(tokenHeight / 2);
+	// Bug 3 — corner badge: position in the top-right corner of the token so
+	// the token center stays clickable for opening the character sheet. The
+	// badge sits slightly inset from the corner so it reads as part of the
+	// token without overflowing the grid cell.
+	const swordsSize = Math.max(16, Math.round(tokenSize * 0.32));
+	const cornerMargin = Math.max(2, Math.round(swordsSize * 0.18));
+	const badgeX = Math.round(tokenSize - swordsSize / 2 - cornerMargin);
+	const badgeY = Math.round(swordsSize / 2 + cornerMargin);
 
-	// Tint: soft off-white for players, soft coral-red for GM/monsters, muted grey for hesitant
-	const iconColor = hesitantBlocked ? 0x9ca3af : side === 'player' ? 0xe8edf3 : 0xfca5a5;
-	const swordsSize = Math.max(20, Math.round(tokenSize * 0.5));
+	// Tint priority: hesitant grey > end-of-side amber > side default (player white / GM coral).
+	// Feature 7 — amber telegraph: when this is the last eligible combatant on
+	// the current side, the badge tints amber to warn that selecting will pass
+	// the turn to the other side.
+	const iconColor = hesitantBlocked
+		? 0x9ca3af
+		: isLastOnSide
+			? 0xfbbf24
+			: side === 'player'
+				? 0xe8edf3
+				: 0xfca5a5;
 
 	// Soft dark shadow behind the icon for contrast against light maps.
 	const shadowSprite = createSwordsSprite(Math.round(swordsSize * 1.06), 0x000000);
@@ -267,7 +341,7 @@ function createOverlay(
 		container.addChild(countLabel);
 	}
 
-	container.position.set(centerX, centerY);
+	container.position.set(badgeX, badgeY);
 
 	token.addChild(container);
 	token[ZIPPER_OVERLAY_KEY] = container;
@@ -279,6 +353,9 @@ function createOverlay(
 	container.alpha = restingAlpha;
 
 	// --- Interactive hit target on canvas.interface ---
+	// Bug 3 — the hit target now sits over the corner badge only, NOT over the
+	// token center. Token-center clicks reach the token's default click handler
+	// (opens the character sheet) instead of being swallowed by this overlay.
 	const interfaceLayer = (canvas as any).interface as PIXI.Container | undefined;
 	let isHovered = false;
 	if (interfaceLayer) {
@@ -287,7 +364,9 @@ function createOverlay(
 		hitTarget.cursor = hesitantBlocked ? 'not-allowed' : 'pointer';
 		hitTarget.zIndex = 10000;
 
-		const hitPad = 6;
+		// Tight hit area sized to the badge; small pad for easier targeting on
+		// small tokens but never spilling onto the token center.
+		const hitPad = 3;
 		const hitBg = new PIXI.Graphics();
 		hitBg.beginFill(0x000000, 0.001);
 		hitBg.drawCircle(0, 0, Math.round(swordsSize / 2) + hitPad);
@@ -296,18 +375,23 @@ function createOverlay(
 
 		const tokenX = Number(token.x ?? 0);
 		const tokenY = Number(token.y ?? 0);
-		hitTarget.position.set(Math.round(tokenX + centerX), Math.round(tokenY + centerY));
+		hitTarget.position.set(Math.round(tokenX + badgeX), Math.round(tokenY + badgeY));
 
-		// Hover: stop pulsing, snap to slightly larger than max pulse size,
-		// and brighten to full opacity.
+		// Hover: grow on hover (Bug 3 affordance for the smaller badge), full opacity.
 		hitTarget.on('pointerover', () => {
 			isHovered = true;
-			container.scale.set(1.15);
+			container.scale.set(1.25);
 			container.alpha = 1;
+			// Feature 5 — hesitant tooltip on hover. Show the block reason at
+			// the cursor instead of waiting for a misclick to fire a notification.
+			if (hesitantBlocked) {
+				showHesitantTooltip(token, badgeX, badgeY);
+			}
 		});
 		hitTarget.on('pointerout', () => {
 			isHovered = false;
 			container.alpha = restingAlpha;
+			hideHesitantTooltip(token);
 		});
 
 		interfaceLayer.addChild(hitTarget);
@@ -408,7 +492,7 @@ function refreshTokenOverlay(
 		return;
 	}
 
-	createOverlay(token, info.combatantId, info.hesitantBlocked, info.side);
+	createOverlay(token, info.combatantId, info.hesitantBlocked, info.side, info.isLastOnSide);
 }
 
 function notifySelectionPhaseIfNeeded(): void {
