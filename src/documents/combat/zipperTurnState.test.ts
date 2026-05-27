@@ -4,7 +4,13 @@ import {
 	buildClearTurnHistoryUpdate,
 	buildMarkLastTurnUndoneUpdate,
 	buildPreviousTurnUnwindUpdate,
+	getActedOccurrenceCount,
+	getNextUnactedOccurrence,
+	getSoloOccurrencesPerRound,
+	getTotalOccurrencesForCombatant,
 	getTurnHistory,
+	hasAnyOccurrenceUnacted,
+	hasOccurrenceActed,
 	type TurnHistoryEntry,
 } from './zipperTurnState.js';
 
@@ -14,12 +20,20 @@ import {
 
 type MinimalCombatantShape = {
 	id: string;
-	type: 'character' | 'npc';
+	type: 'character' | 'npc' | 'soloMonster';
 	token?: { disposition?: number };
 };
 
 type MinimalCombatShape = {
-	flags?: { nimble?: { zipper?: { turnHistory?: TurnHistoryEntry[]; actCounter?: number } } };
+	flags?: {
+		nimble?: {
+			zipper?: {
+				turnHistory?: TurnHistoryEntry[];
+				actCounter?: number;
+				soloOccurrencesPerRound?: number;
+			};
+		};
+	};
 	combatants: { get: (id: string) => MinimalCombatantShape | undefined };
 };
 
@@ -27,6 +41,7 @@ function makeCombat(
 	opts: {
 		turnHistory?: TurnHistoryEntry[];
 		actCounter?: number;
+		soloOccurrencesPerRound?: number;
 		combatants?: MinimalCombatantShape[];
 	} = {},
 ): MinimalCombatShape {
@@ -38,6 +53,7 @@ function makeCombat(
 				zipper: {
 					turnHistory: opts.turnHistory,
 					actCounter: opts.actCounter,
+					soloOccurrencesPerRound: opts.soloOccurrencesPerRound,
 				},
 			},
 		},
@@ -51,6 +67,10 @@ function makeCharacter(id: string): MinimalCombatantShape {
 
 function makeHostileNpc(id: string): MinimalCombatantShape {
 	return { id, type: 'npc', token: { disposition: -1 } };
+}
+
+function makeSoloMonster(id: string): MinimalCombatantShape {
+	return { id, type: 'soloMonster', token: { disposition: -1 } };
 }
 
 // ---------------------------------------------------------------------------
@@ -428,5 +448,258 @@ describe('buildPreviousTurnUnwindUpdate — group unwind (ended turn)', () => {
 		expect(ids).not.toContain('npc-removed');
 		// counter still decrements by group size — the entry recorded that footprint
 		expect(result.combatFlags['flags.nimble.zipper.actCounter']).toBe(1);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Solo-monster multi-turn — Feature: per-occurrence acted state
+// ---------------------------------------------------------------------------
+//
+// Snapshot: when zipper combat starts (or a new round begins) we record how
+// many turns each solo monster gets that round (= alive hero count). Acted
+// state for solos is then derived from the turn history rather than the
+// per-combatant `acted` flag, so each occurrence tracks independently.
+//
+// Non-solo combatants still behave as single-occurrence — the helpers below
+// must collapse to the existing single-flag semantics for them.
+
+describe('getSoloOccurrencesPerRound', () => {
+	it('returns 1 when the flag is missing (defensive default)', () => {
+		const combat = makeCombat();
+		expect(getSoloOccurrencesPerRound(combat as never)).toBe(1);
+	});
+
+	it('returns the stored count when present', () => {
+		const combat = makeCombat({ soloOccurrencesPerRound: 4 });
+		expect(getSoloOccurrencesPerRound(combat as never)).toBe(4);
+	});
+
+	it('returns 1 when the stored value is 0 (degenerate; no heroes alive at snapshot)', () => {
+		// A 0-occurrence solo would be unreachable in eligibility — clamp to 1
+		// so combat doesn't softlock if the snapshot fires while no heroes are
+		// alive (e.g. between rounds during a TPK recovery).
+		const combat = makeCombat({ soloOccurrencesPerRound: 0 });
+		expect(getSoloOccurrencesPerRound(combat as never)).toBe(1);
+	});
+});
+
+describe('getActedOccurrenceCount', () => {
+	it('returns 0 when history is empty', () => {
+		const combat = makeCombat();
+		expect(getActedOccurrenceCount(combat as never, 'boss')).toBe(0);
+	});
+
+	it('returns 0 when history has no entries for the given combatantId', () => {
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'hero', side: 'player', actOrder: 1, undone: false },
+		];
+		const combat = makeCombat({ turnHistory: history });
+		expect(getActedOccurrenceCount(combat as never, 'boss')).toBe(0);
+	});
+
+	it('returns 1 for a single non-undone entry matching combatantId', () => {
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'boss', side: 'gm', actOrder: 2, undone: false, occurrenceIndex: 0 },
+		];
+		const combat = makeCombat({ turnHistory: history });
+		expect(getActedOccurrenceCount(combat as never, 'boss')).toBe(1);
+	});
+
+	it('counts multiple non-undone entries for the same combatantId', () => {
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'boss', side: 'gm', actOrder: 2, undone: false, occurrenceIndex: 0 },
+			{ combatantId: 'hero', side: 'player', actOrder: 3, undone: false },
+			{ combatantId: 'boss', side: 'gm', actOrder: 4, undone: false, occurrenceIndex: 1 },
+		];
+		const combat = makeCombat({ turnHistory: history });
+		expect(getActedOccurrenceCount(combat as never, 'boss')).toBe(2);
+	});
+
+	it('ignores undone entries', () => {
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'boss', side: 'gm', actOrder: 2, undone: false, occurrenceIndex: 0 },
+			{ combatantId: 'boss', side: 'gm', actOrder: 4, undone: true, occurrenceIndex: 1 },
+		];
+		const combat = makeCombat({ turnHistory: history });
+		expect(getActedOccurrenceCount(combat as never, 'boss')).toBe(1);
+	});
+});
+
+describe('getTotalOccurrencesForCombatant', () => {
+	it('returns 1 for a character', () => {
+		const hero = makeCharacter('h1');
+		const combat = makeCombat({ soloOccurrencesPerRound: 4, combatants: [hero] });
+		expect(getTotalOccurrencesForCombatant(combat as never, hero as never)).toBe(1);
+	});
+
+	it('returns 1 for a regular npc', () => {
+		const npc = makeHostileNpc('npc1');
+		const combat = makeCombat({ soloOccurrencesPerRound: 4, combatants: [npc] });
+		expect(getTotalOccurrencesForCombatant(combat as never, npc as never)).toBe(1);
+	});
+
+	it('returns the stored count for a soloMonster', () => {
+		const boss = makeSoloMonster('boss');
+		const combat = makeCombat({ soloOccurrencesPerRound: 3, combatants: [boss] });
+		expect(getTotalOccurrencesForCombatant(combat as never, boss as never)).toBe(3);
+	});
+
+	it('defaults to 1 for a soloMonster when no snapshot is stored', () => {
+		const boss = makeSoloMonster('boss');
+		const combat = makeCombat({ combatants: [boss] });
+		expect(getTotalOccurrencesForCombatant(combat as never, boss as never)).toBe(1);
+	});
+});
+
+describe('hasOccurrenceActed', () => {
+	it('returns false for occurrence 0 when history is empty', () => {
+		const hero = makeCharacter('h1');
+		const combat = makeCombat({ combatants: [hero] });
+		expect(hasOccurrenceActed(combat as never, hero as never, 0)).toBe(false);
+	});
+
+	it('returns true for occurrence 0 after one acted turn', () => {
+		const hero = makeCharacter('h1');
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'h1', side: 'player', actOrder: 1, undone: false },
+		];
+		const combat = makeCombat({ turnHistory: history, combatants: [hero] });
+		expect(hasOccurrenceActed(combat as never, hero as never, 0)).toBe(true);
+	});
+
+	it('returns false for occurrence 1 of a solo after only one acted turn', () => {
+		const boss = makeSoloMonster('boss');
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'boss', side: 'gm', actOrder: 2, undone: false, occurrenceIndex: 0 },
+		];
+		const combat = makeCombat({ turnHistory: history, combatants: [boss] });
+		expect(hasOccurrenceActed(combat as never, boss as never, 0)).toBe(true);
+		expect(hasOccurrenceActed(combat as never, boss as never, 1)).toBe(false);
+	});
+
+	it('returns true for occurrence 1 of a solo after two acted turns', () => {
+		const boss = makeSoloMonster('boss');
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'boss', side: 'gm', actOrder: 2, undone: false, occurrenceIndex: 0 },
+			{ combatantId: 'boss', side: 'gm', actOrder: 4, undone: false, occurrenceIndex: 1 },
+		];
+		const combat = makeCombat({ turnHistory: history, combatants: [boss] });
+		expect(hasOccurrenceActed(combat as never, boss as never, 1)).toBe(true);
+	});
+
+	it('after a turn is undone, the corresponding occurrence is no longer acted', () => {
+		const boss = makeSoloMonster('boss');
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'boss', side: 'gm', actOrder: 2, undone: false, occurrenceIndex: 0 },
+			{ combatantId: 'boss', side: 'gm', actOrder: 4, undone: true, occurrenceIndex: 1 },
+		];
+		const combat = makeCombat({ turnHistory: history, combatants: [boss] });
+		expect(hasOccurrenceActed(combat as never, boss as never, 0)).toBe(true);
+		expect(hasOccurrenceActed(combat as never, boss as never, 1)).toBe(false);
+	});
+});
+
+describe('hasAnyOccurrenceUnacted', () => {
+	it('returns true for a character with no history (single occurrence)', () => {
+		const hero = makeCharacter('h1');
+		const combat = makeCombat({ combatants: [hero] });
+		expect(hasAnyOccurrenceUnacted(combat as never, hero as never)).toBe(true);
+	});
+
+	it('returns false for a character after one acted turn (single occurrence consumed)', () => {
+		const hero = makeCharacter('h1');
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'h1', side: 'player', actOrder: 1, undone: false },
+		];
+		const combat = makeCombat({ turnHistory: history, combatants: [hero] });
+		expect(hasAnyOccurrenceUnacted(combat as never, hero as never)).toBe(false);
+	});
+
+	it('returns true for a solo with 1 acted turn out of 3', () => {
+		const boss = makeSoloMonster('boss');
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'boss', side: 'gm', actOrder: 2, undone: false, occurrenceIndex: 0 },
+		];
+		const combat = makeCombat({
+			turnHistory: history,
+			soloOccurrencesPerRound: 3,
+			combatants: [boss],
+		});
+		expect(hasAnyOccurrenceUnacted(combat as never, boss as never)).toBe(true);
+	});
+
+	it('returns false for a solo with all 3 occurrences acted', () => {
+		const boss = makeSoloMonster('boss');
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'boss', side: 'gm', actOrder: 2, undone: false, occurrenceIndex: 0 },
+			{ combatantId: 'boss', side: 'gm', actOrder: 4, undone: false, occurrenceIndex: 1 },
+			{ combatantId: 'boss', side: 'gm', actOrder: 6, undone: false, occurrenceIndex: 2 },
+		];
+		const combat = makeCombat({
+			turnHistory: history,
+			soloOccurrencesPerRound: 3,
+			combatants: [boss],
+		});
+		expect(hasAnyOccurrenceUnacted(combat as never, boss as never)).toBe(false);
+	});
+
+	it('returns true for a solo after the last entry is undone (re-eligible for that occurrence)', () => {
+		const boss = makeSoloMonster('boss');
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'boss', side: 'gm', actOrder: 2, undone: false, occurrenceIndex: 0 },
+			{ combatantId: 'boss', side: 'gm', actOrder: 4, undone: false, occurrenceIndex: 1 },
+			{ combatantId: 'boss', side: 'gm', actOrder: 6, undone: true, occurrenceIndex: 2 },
+		];
+		const combat = makeCombat({
+			turnHistory: history,
+			soloOccurrencesPerRound: 3,
+			combatants: [boss],
+		});
+		expect(hasAnyOccurrenceUnacted(combat as never, boss as never)).toBe(true);
+	});
+});
+
+describe('getNextUnactedOccurrence', () => {
+	it('returns 0 for a combatant with no history', () => {
+		const hero = makeCharacter('h1');
+		const combat = makeCombat({ combatants: [hero] });
+		expect(getNextUnactedOccurrence(combat as never, hero as never)).toBe(0);
+	});
+
+	it('returns 1 for a solo after one turn taken', () => {
+		const boss = makeSoloMonster('boss');
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'boss', side: 'gm', actOrder: 2, undone: false, occurrenceIndex: 0 },
+		];
+		const combat = makeCombat({
+			turnHistory: history,
+			soloOccurrencesPerRound: 3,
+			combatants: [boss],
+		});
+		expect(getNextUnactedOccurrence(combat as never, boss as never)).toBe(1);
+	});
+
+	it('returns -1 when all N occurrences are used', () => {
+		const boss = makeSoloMonster('boss');
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'boss', side: 'gm', actOrder: 2, undone: false, occurrenceIndex: 0 },
+			{ combatantId: 'boss', side: 'gm', actOrder: 4, undone: false, occurrenceIndex: 1 },
+			{ combatantId: 'boss', side: 'gm', actOrder: 6, undone: false, occurrenceIndex: 2 },
+		];
+		const combat = makeCombat({
+			turnHistory: history,
+			soloOccurrencesPerRound: 3,
+			combatants: [boss],
+		});
+		expect(getNextUnactedOccurrence(combat as never, boss as never)).toBe(-1);
+	});
+
+	it('returns -1 for a single-occurrence combatant who has already acted', () => {
+		const hero = makeCharacter('h1');
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'h1', side: 'player', actOrder: 1, undone: false },
+		];
+		const combat = makeCombat({ turnHistory: history, combatants: [hero] });
+		expect(getNextUnactedOccurrence(combat as never, hero as never)).toBe(-1);
 	});
 });
