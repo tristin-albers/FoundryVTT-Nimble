@@ -78,6 +78,7 @@ import {
 	hasAnyOccurrenceUnacted,
 	hasInProgressTurn,
 	hasOccurrenceActed,
+	isOccurrenceInProgress,
 	isZipperAwaitingSelection,
 	isZipperInitiativeActive,
 	resolveNextSide,
@@ -1333,25 +1334,39 @@ class NimbleCombat extends Combat {
 			actOrderByKey.set(`${entry.combatantId}::${occurrence}`, entry.actOrder);
 		}
 		type ActedCard = { combatant: Combatant.Implementation; actOrder: number };
-		const acted: ActedCard[] = [];
+		const finished: ActedCard[] = [];
+		const inProgress: Combatant.Implementation[] = [];
 		const unacted: Combatant.Implementation[] = [];
 		const occurrenceCounterById = new Map<string, number>();
 		for (const combatant of expandedTurns) {
 			const id = combatant.id ?? '';
 			const occurrenceIndex = occurrenceCounterById.get(id) ?? 0;
 			occurrenceCounterById.set(id, occurrenceIndex + 1);
-			// Dead combatants always belong in the acted section regardless of how
-			// many of their occurrences were consumed — a dead boss should never
-			// linger as "eligible" cards 2..N in the upcoming section.
-			if (isCombatantDead(combatant) || hasOccurrenceActed(this, combatant, occurrenceIndex)) {
+			// Dead combatants always belong in the finished section regardless of
+			// how many of their occurrences were consumed — a dead boss should
+			// never linger as "eligible" cards 2..N in the upcoming section.
+			if (isCombatantDead(combatant)) {
 				const actOrder = actOrderByKey.get(`${id}::${occurrenceIndex}`) ?? 0;
-				acted.push({ combatant, actOrder });
-			} else {
-				unacted.push(combatant);
+				finished.push({ combatant, actOrder });
+				continue;
 			}
+			// Three-zone layout: [finished | in-progress | pending]. The in-progress
+			// zone is the active turn-taker — selected but not yet ended. Keeping
+			// them visually distinct from finished prevents the "I just got selected
+			// and my card is already dimmed in the acted section" UX issue.
+			if (isOccurrenceInProgress(this, combatant, occurrenceIndex)) {
+				inProgress.push(combatant);
+				continue;
+			}
+			if (hasOccurrenceActed(this, combatant, occurrenceIndex)) {
+				const actOrder = actOrderByKey.get(`${id}::${occurrenceIndex}`) ?? 0;
+				finished.push({ combatant, actOrder });
+				continue;
+			}
+			unacted.push(combatant);
 		}
-		acted.sort((a, b) => a.actOrder - b.actOrder);
-		return [...acted.map((c) => c.combatant), ...unacted];
+		finished.sort((a, b) => a.actOrder - b.actOrder);
+		return [...finished.map((c) => c.combatant), ...inProgress, ...unacted];
 	}
 
 	override async nextTurn(): Promise<this> {

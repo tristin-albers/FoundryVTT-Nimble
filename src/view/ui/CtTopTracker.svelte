@@ -8,8 +8,10 @@
 		getZipperActCounter,
 		getZipperCurrentSide,
 		getZipperSideStats,
+		hasFinishedOccurrence,
 		hasOccurrenceActed,
 		isHesitantBlocked,
+		isOccurrenceInProgress,
 		type TurnHistoryEntry,
 	} from '../../documents/combat/zipperTurnState.js';
 	import { getMinionGroupId } from '../../utils/minionGrouping.js';
@@ -183,16 +185,20 @@
 	}
 
 	function getZipperActedSignature(): string {
-		const actedKeys: string[] = [];
 		if (!currentCombat) return '';
+		// Encode each entry's zone (p = pending, i = in-progress, f = finished)
+		// so the FLIP fires on both the pending→in-progress and the
+		// in-progress→finished transitions, not just on entering "acted" overall.
+		const parts: string[] = [];
 		for (const entry of virtualizedAliveEntries.entries) {
 			if (entry.kind !== 'combatant') continue;
 			const occurrenceIndex = entryOccurrenceMap.get(entry.key) ?? 0;
-			if (hasOccurrenceActed(currentCombat, entry.combatant, occurrenceIndex)) {
-				actedKeys.push(entry.key);
-			}
+			const inProgress = isOccurrenceInProgress(currentCombat, entry.combatant, occurrenceIndex);
+			const acted = hasOccurrenceActed(currentCombat, entry.combatant, occurrenceIndex);
+			const state = inProgress ? 'i' : acted ? 'f' : 'p';
+			parts.push(`${entry.key}:${state}`);
 		}
-		return actedKeys.join('|');
+		return parts.join('|');
 	}
 
 	const prefersReducedMotion = (): boolean =>
@@ -680,9 +686,13 @@
 								entryTotalForCombatant > 1
 									? `${entryOccurrenceIndex + 1}/${entryTotalForCombatant}`
 									: null}
+							{@const isZipperInProgress =
+								isZipperMode && currentCombat
+									? isOccurrenceInProgress(currentCombat, entry.combatant, entryOccurrenceIndex)
+									: false}
 							{@const isZipperActed =
 								isZipperMode && currentCombat
-									? hasOccurrenceActed(currentCombat, entry.combatant, entryOccurrenceIndex)
+									? hasFinishedOccurrence(currentCombat, entry.combatant, entryOccurrenceIndex)
 									: false}
 							{@const isZipperHesitantBlocked =
 								isZipperMode && currentCombat && getCombatantId(entry.combatant)
@@ -695,6 +705,7 @@
 								class:nimble-ct__portrait--dead={entry.combatant.defeated}
 								class:nimble-ct__portrait--draggable={canDragEntry}
 								class:nimble-ct__portrait--zipper-acted={isZipperActed}
+								class:nimble-ct__portrait--zipper-in-progress={isZipperInProgress}
 								class:nimble-ct__portrait--preview-gap-before={dragPreview?.targetKey ===
 									entry.key && dragPreview.before}
 								class:nimble-ct__portrait--preview-gap-after={dragPreview?.targetKey ===
@@ -747,11 +758,13 @@
 											{entryOccurrenceLabel}
 										</div>
 									{/if}
-									{#if isZipperMode && game.user?.isGM && combatStarted && entryTotalForCombatant <= 1}
+									{#if isZipperMode && game.user?.isGM && combatStarted && entryTotalForCombatant <= 1 && !isZipperInProgress}
 										<!-- Hidden for solo cards: the toggle writes the per-combatant `acted`
 										     flag, which would affect all N cards. For solos, use the Previous
 										     Turn button (chevron-left in the controls) to unwind a single
-										     occurrence via the history-derived path. -->
+										     occurrence via the history-derived path.
+										     Hidden for the in-progress card too: that turn is mid-flight; ending
+										     it goes through the End Turn button, not Mark-Acted. -->
 										<!-- svelte-ignore a11y_click_events_have_key_events -->
 										<!-- svelte-ignore a11y_no_static_element_interactions -->
 										<div

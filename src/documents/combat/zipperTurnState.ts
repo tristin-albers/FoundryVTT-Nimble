@@ -693,6 +693,47 @@ export function hasOccurrenceActed(
 }
 
 /**
+ * True when this specific (combatant, occurrence) is the currently-active turn —
+ * i.e., the latest matching non-undone history entry has `actOrder > actCounter`,
+ * which means `selectZipperCombatant` ran but `#zipperNextTurn` hasn't bumped
+ * the counter yet. Used by the tracker to give the active card a "middle zone"
+ * presentation instead of immediately dimming it as already-acted.
+ */
+export function isOccurrenceInProgress(
+	combat: Combat,
+	combatant: Combatant.Implementation,
+	occurrenceIndex: number,
+): boolean {
+	const id = combatant.id;
+	if (!id) return false;
+	const history = getTurnHistory(combat);
+	const actCounter = getZipperActCounter(combat);
+	for (let i = history.length - 1; i >= 0; i--) {
+		const entry = history[i];
+		if (entry.undone) continue;
+		if (entry.combatantId !== id) continue;
+		const entryOccurrence = entry.occurrenceIndex ?? 0;
+		if (entryOccurrence !== occurrenceIndex) continue;
+		return entry.actOrder > actCounter;
+	}
+	return false;
+}
+
+/**
+ * True when this occurrence has acted AND the turn has ended (counter bumped
+ * past the entry's actOrder). Distinct from `hasOccurrenceActed` which is true
+ * during the in-progress window as well.
+ */
+export function hasFinishedOccurrence(
+	combat: Combat,
+	combatant: Combatant.Implementation,
+	occurrenceIndex: number,
+): boolean {
+	if (!hasOccurrenceActed(combat, combatant, occurrenceIndex)) return false;
+	return !isOccurrenceInProgress(combat, combatant, occurrenceIndex);
+}
+
+/**
  * Eligibility check used by `getUnactedCombatantsForSide`, token overlay
  * eligibility builder, and the GM's selection validators. Returns true while
  * the combatant has at least one occurrence left to act.
