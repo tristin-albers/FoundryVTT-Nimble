@@ -64,7 +64,6 @@ import {
 	buildUnmarkActedUpdates,
 	buildZipperCombatFlagUpdate,
 	canSelectCombatantForZipperTurn,
-	determineFirstSide,
 	getActedOccurrenceCount,
 	getCombatantZipperSide,
 	getNextUnactedOccurrence,
@@ -80,6 +79,7 @@ import {
 	hasOccurrenceActed,
 	isOccurrenceInProgress,
 	isZipperAwaitingSelection,
+	isZipperFirstSidePending,
 	isZipperInitiativeActive,
 	resolveNextSide,
 	type TurnHistoryEntry,
@@ -809,14 +809,16 @@ class NimbleCombat extends Combat {
 			await this.updateEmbeddedDocuments('Combatant', [...combatantUpdates.values()]);
 		}
 
-		// Zipper initiative: determine first side and persist combat flags
+		// Zipper initiative: enter open-selection mode. Neither side is pre-chosen
+		// as first; the player or the GM picks whoever takes the first turn, and
+		// that side becomes the locked round-start side for the rest of combat
+		// (handles GM-narrated ambushes where monsters go first regardless of
+		// initiative). `firstSidePending` is cleared on the first select.
 		if (isZipperInitiativeActive()) {
-			const firstSide = determineFirstSide(this);
 			await this.update({
 				...buildZipperCombatFlagUpdate({
-					currentSide: firstSide,
-					roundStartSide: firstSide,
 					awaitingSelection: true,
+					firstSidePending: true,
 					actCounter: 0,
 				}),
 				...buildClearTurnHistoryUpdate(),
@@ -1654,6 +1656,12 @@ class NimbleCombat extends Combat {
 		const combatant = this.combatants.get(combatantId);
 		if (!combatant) return;
 
+		// First selection of combat locks roundStartSide. After Begin Combat both
+		// sides are eligible (open selection); whichever side acts first becomes
+		// the round-start side for the rest of combat.
+		const firstSidePending = isZipperFirstSidePending(this);
+		const selectedSide = firstSidePending ? getCombatantZipperSide(combatant) : currentSide;
+
 		// Rebuild turns and find the target combatant's index.
 		this.turns = this.setupTurns();
 		const turnIdentity: TurnIdentity = { combatantId, occurrence: null };
@@ -1679,7 +1687,7 @@ class NimbleCombat extends Combat {
 			totalOccurrences > 1 ? Math.max(0, getNextUnactedOccurrence(this, combatant)) : undefined;
 		const historyEntry = {
 			combatantId,
-			side: currentSide,
+			side: selectedSide,
 			actOrder: getZipperActCounter(this) + 1,
 			...(isGroup ? { isGroup: true, groupCombatantIds: groupIds } : {}),
 			...(occurrenceIndex !== undefined ? { occurrenceIndex } : {}),
@@ -1691,7 +1699,16 @@ class NimbleCombat extends Combat {
 		// resolved and the override's re-resolution can fight with our intent.
 		await super.update({
 			turn: targetIndex,
-			...buildZipperCombatFlagUpdate({ awaitingSelection: false }),
+			...buildZipperCombatFlagUpdate(
+				firstSidePending
+					? {
+							awaitingSelection: false,
+							firstSidePending: false,
+							currentSide: selectedSide,
+							roundStartSide: selectedSide,
+						}
+					: { awaitingSelection: false },
+			),
 			...buildExpandedTurnIdentityUpdate(
 				this.#resolveTurnIdentityAtIndex(this.turns, targetIndex) ?? turnIdentity,
 			),
@@ -1722,6 +1739,10 @@ class NimbleCombat extends Combat {
 		if (!isZipperInitiativeActive()) return false;
 		if (!game.user?.isGM) return false;
 		if (!isZipperAwaitingSelection(this)) return false;
+		// During open first-side selection both sides are eligible — let the
+		// human pick rather than auto-resolving (the whole point of the flow is
+		// the GM/players choosing who acts first).
+		if (isZipperFirstSidePending(this)) return false;
 
 		const currentSide = getZipperCurrentSide(this);
 		const eligible = getUnactedCombatantsForSide(this, currentSide);

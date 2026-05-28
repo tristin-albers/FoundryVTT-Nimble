@@ -12,6 +12,7 @@
 		hasOccurrenceActed,
 		isHesitantBlocked,
 		isOccurrenceInProgress,
+		isZipperFirstSidePending,
 		type TurnHistoryEntry,
 	} from '../../documents/combat/zipperTurnState.js';
 	import { getMinionGroupId } from '../../utils/minionGrouping.js';
@@ -107,6 +108,9 @@
 	let isZipperMode = $derived(trackerViewState.isZipperMode);
 	let zipperCurrentSide = $derived(trackerViewState.zipperCurrentSide);
 	let zipperAwaitingSelection = $derived(trackerViewState.zipperAwaitingSelection);
+	let zipperFirstSidePending = $derived(
+		isZipperMode && currentCombat ? isZipperFirstSidePending(currentCombat) : false,
+	);
 
 	// Feature 4 — turn history strip + Feature 6 — side progress indicator.
 	// Reactivity flows from currentCombat (which the tracker store already proxies
@@ -637,7 +641,12 @@
 								<span class="nimble-ct__zipper-separator-line"></span>
 								{#if zipperAwaitingSelection}
 									<span class="nimble-ct__zipper-separator-label">
-										{#if zipperOverflow}
+										{#if zipperFirstSidePending}
+											{localizeWithFallback(
+												'NIMBLE.zipperInitiative.chooseFirstTurn',
+												'Choose first turn',
+											)}
+										{:else if zipperOverflow}
 											{localizeWithFallback('NIMBLE.zipperInitiative.overflow', 'Overflow')}
 										{:else if zipperCurrentSide === 'player'}
 											{localizeWithFallback(

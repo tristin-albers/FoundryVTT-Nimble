@@ -9,6 +9,7 @@ import {
 	hasAnyOccurrenceUnacted,
 	isHesitantBlocked,
 	isZipperAwaitingSelection,
+	isZipperFirstSidePending,
 	isZipperInitiativeActive,
 } from '../documents/combat/zipperTurnState.js';
 import { requestZipperCombatantSelection } from '../utils/combatTurnActions.js';
@@ -153,6 +154,7 @@ function buildEligibleTokenIds(): Map<string, EligibleTokenInfo> {
 	if (!isZipperAwaitingSelection(combat)) return eligibleMap;
 
 	const currentSide = getZipperCurrentSide(combat);
+	const firstSidePending = isZipperFirstSidePending(combat);
 	const isGM = Boolean(game.user?.isGM);
 
 	const combatantsForScene = combat.combatants.contents.filter(
@@ -165,7 +167,9 @@ function buildEligibleTokenIds(): Map<string, EligibleTokenInfo> {
 		if (!combatant.tokenId) continue;
 		if (isCombatantDead(combatant)) continue;
 		if (!hasAnyOccurrenceUnacted(combat, combatant)) continue;
-		if (getCombatantZipperSide(combatant) !== currentSide) continue;
+		// Open first-side selection: either side can pick first, so show overlays
+		// on every eligible token regardless of currentSide.
+		if (!firstSidePending && getCombatantZipperSide(combatant) !== currentSide) continue;
 
 		// For minion groups, only show overlay on the group leader
 		const groupId = getMinionGroupId(combatant);
@@ -203,10 +207,17 @@ function buildEligibleTokenIds(): Map<string, EligibleTokenInfo> {
 	// Feature 7 — last-on-side telegraph. Count remaining OCCURRENCES (not
 	// combatants), so a solo with 2/3 turns left doesn't trigger the amber
 	// "last on side" warning. Telegraph fires when literally one turn remains.
-	const remainingOccurrencesOnCurrentSide = getRemainingOccurrenceCountForSide(combat, currentSide);
-	if (remainingOccurrencesOnCurrentSide === 1) {
-		for (const info of eligibleMap.values()) {
-			if (info.side === currentSide) info.isLastOnSide = true;
+	// Skipped during firstSidePending — no side has been chosen yet, so the
+	// "last on this side" concept doesn't apply.
+	if (!firstSidePending) {
+		const remainingOccurrencesOnCurrentSide = getRemainingOccurrenceCountForSide(
+			combat,
+			currentSide,
+		);
+		if (remainingOccurrencesOnCurrentSide === 1) {
+			for (const info of eligibleMap.values()) {
+				if (info.side === currentSide) info.isLastOnSide = true;
+			}
 		}
 	}
 

@@ -20,6 +20,7 @@ const ZIPPER_FLAG_ROOT = `flags.${SYSTEM_ID}.zipper`;
 const ZIPPER_CURRENT_SIDE_PATH = `${ZIPPER_FLAG_ROOT}.currentSide`;
 const ZIPPER_ROUND_START_SIDE_PATH = `${ZIPPER_FLAG_ROOT}.roundStartSide`;
 const ZIPPER_AWAITING_SELECTION_PATH = `${ZIPPER_FLAG_ROOT}.awaitingSelection`;
+const ZIPPER_FIRST_SIDE_PENDING_PATH = `${ZIPPER_FLAG_ROOT}.firstSidePending`;
 const ZIPPER_ACT_COUNTER_PATH = `${ZIPPER_FLAG_ROOT}.actCounter`;
 const ZIPPER_TURN_HISTORY_PATH = `${ZIPPER_FLAG_ROOT}.turnHistory`;
 const ZIPPER_SOLO_OCCURRENCES_PATH = `${ZIPPER_FLAG_ROOT}.soloOccurrencesPerRound`;
@@ -77,6 +78,16 @@ export function isZipperAwaitingSelection(combat: Combat): boolean {
 	return getFlagValue(combat, ZIPPER_AWAITING_SELECTION_PATH) === true;
 }
 
+/**
+ * True at combat start before either side has taken a turn. While true, the
+ * selection UI ignores side filtering: either players or the GM can pick first,
+ * and whichever side acts first becomes `roundStartSide` for the rest of combat.
+ * Cleared as soon as the first combatant is selected.
+ */
+export function isZipperFirstSidePending(combat: Combat): boolean {
+	return getFlagValue(combat, ZIPPER_FIRST_SIDE_PENDING_PATH) === true;
+}
+
 export function getZipperActCounter(combat: Combat): number {
 	const value = Number(getFlagValue(combat, ZIPPER_ACT_COUNTER_PATH) ?? 0);
 	return Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
@@ -90,6 +101,7 @@ export function buildZipperCombatFlagUpdate(params: {
 	currentSide?: ZipperSide;
 	roundStartSide?: ZipperSide;
 	awaitingSelection?: boolean;
+	firstSidePending?: boolean;
 	actCounter?: number;
 }): Record<string, unknown> {
 	const update: Record<string, unknown> = {};
@@ -98,6 +110,8 @@ export function buildZipperCombatFlagUpdate(params: {
 		update[ZIPPER_ROUND_START_SIDE_PATH] = params.roundStartSide;
 	if (params.awaitingSelection !== undefined)
 		update[ZIPPER_AWAITING_SELECTION_PATH] = params.awaitingSelection;
+	if (params.firstSidePending !== undefined)
+		update[ZIPPER_FIRST_SIDE_PENDING_PATH] = params.firstSidePending;
 	if (params.actCounter !== undefined) update[ZIPPER_ACT_COUNTER_PATH] = params.actCounter;
 	return update;
 }
@@ -362,26 +376,6 @@ export function buildResetAllActedUpdates(combat: Combat): Record<string, unknow
 }
 
 // ---------------------------------------------------------------------------
-// Determine first side at combat start
-// ---------------------------------------------------------------------------
-
-/**
- * Determine which side goes first based on the highest character initiative roll.
- * If any character rolled 10+, players go first; otherwise GM goes first.
- * This mirrors the Draw Steel "roll to determine first side" concept using existing
- * initiative data that was already rolled for readiness tiers.
- */
-export function determineFirstSide(combat: Combat): ZipperSide {
-	let highestCharacterInitiative = -Infinity;
-	for (const combatant of combat.combatants.contents) {
-		if (combatant.type !== 'character') continue;
-		const initiative = Number(combatant.initiative ?? -Infinity);
-		if (initiative > highestCharacterInitiative) highestCharacterInitiative = initiative;
-	}
-	return highestCharacterInitiative >= 10 ? 'player' : 'gm';
-}
-
-// ---------------------------------------------------------------------------
 // Hesitant combatant helpers
 // ---------------------------------------------------------------------------
 
@@ -418,7 +412,9 @@ export function canSelectCombatantForZipperTurn(
 	if (!combatant) return { valid: false, reason: 'notFound' };
 	if (isCombatantDead(combatant)) return { valid: false, reason: 'dead' };
 	if (!hasAnyOccurrenceUnacted(combat, combatant)) return { valid: false, reason: 'alreadyActed' };
-	if (getCombatantZipperSide(combatant) !== expectedSide) {
+	// First selection of combat: either side can pick. Once a side has acted,
+	// roundStartSide is locked and normal side filtering resumes.
+	if (!isZipperFirstSidePending(combat) && getCombatantZipperSide(combatant) !== expectedSide) {
 		return { valid: false, reason: 'wrongSide' };
 	}
 	if (isHesitantBlocked(combat, combatantId)) {

@@ -2300,6 +2300,7 @@
 			"roundStart": "Round {round} — {side} goes first",
 			"playersChoose": "Players choose",
 			"gmChooses": "GM chooses",
+			"chooseFirstTurn": "Choose first turn",
 			"acting": "Turn in progress",
 			"playerTurn": "Player Turn",
 			"gmTurn": "GM Turn",
