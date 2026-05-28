@@ -641,14 +641,29 @@ export function buildSoloOccurrencesSnapshotUpdate(
  * Count non-undone turn-history entries for a given combatantId. This is the
  * "how many of this combatant's occurrences have acted" derivation used by
  * `hasOccurrenceActed`, `hasAnyOccurrenceUnacted`, and `getNextUnactedOccurrence`.
+ *
+ * Memoized by (combat, history-array-reference). Foundry document updates
+ * produce a new history array, so reference equality auto-invalidates the
+ * cache as soon as a turn ends or is undone.
  */
+const actedCountMemo = new WeakMap<
+	Combat,
+	{ history: TurnHistoryEntry[]; counts: Map<string, number> }
+>();
+
 export function getActedOccurrenceCount(combat: Combat, combatantId: string): number {
-	let count = 0;
-	for (const entry of getTurnHistory(combat)) {
-		if (entry.undone) continue;
-		if (entry.combatantId === combatantId) count++;
+	const history = getTurnHistory(combat);
+	let memo = actedCountMemo.get(combat);
+	if (!memo || memo.history !== history) {
+		const counts = new Map<string, number>();
+		for (const entry of history) {
+			if (entry.undone) continue;
+			counts.set(entry.combatantId, (counts.get(entry.combatantId) ?? 0) + 1);
+		}
+		memo = { history, counts };
+		actedCountMemo.set(combat, memo);
 	}
-	return count;
+	return memo.counts.get(combatantId) ?? 0;
 }
 
 /**
