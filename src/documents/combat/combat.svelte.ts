@@ -1308,7 +1308,10 @@ class NimbleCombat extends Combat {
 			const id = combatant.id ?? '';
 			const occurrenceIndex = occurrenceCounterById.get(id) ?? 0;
 			occurrenceCounterById.set(id, occurrenceIndex + 1);
-			if (hasOccurrenceActed(this, combatant, occurrenceIndex)) {
+			// Dead combatants always belong in the acted section regardless of how
+			// many of their occurrences were consumed — a dead boss should never
+			// linger as "eligible" cards 2..N in the upcoming section.
+			if (isCombatantDead(combatant) || hasOccurrenceActed(this, combatant, occurrenceIndex)) {
 				const actOrder = actOrderByKey.get(`${id}::${occurrenceIndex}`) ?? 0;
 				acted.push({ combatant, actOrder });
 			} else {
@@ -1638,6 +1641,17 @@ class NimbleCombat extends Combat {
 			),
 			...buildAppendTurnHistoryUpdate(this, historyEntry),
 		} as Parameters<Combat['update']>[0]);
+
+		// Solo monster action economy: per Nimble, a solo "acts after each hero"
+		// with 1 action per turn (so total actions/round = N occurrences = hero
+		// count). Without this, the boss spends from a shared pool refilled only
+		// at end of round, effectively giving them ~1 useful turn per round.
+		// Force current = 1 at the start of each solo's turn.
+		if (combatant.type === 'soloMonster') {
+			await combatant.update({
+				'system.actions.base.current': 1,
+			} as Record<string, unknown>);
+		}
 	}
 
 	/**
@@ -1791,11 +1805,32 @@ class NimbleCombat extends Combat {
 	/**
 	 * GM-only: assign combatants into a persistent turn group that acts together.
 	 * The first combatant becomes the group leader.
+	 *
+	 * Solo monsters are excluded: they take N turns per round on their own and
+	 * bundling them into a group would corrupt the per-occurrence accounting.
+	 * Same guard as selectZipperGroup; defensive in case a GM tries it.
 	 */
 	async createPersistentTurnGroup(combatantIds: string[]): Promise<void> {
+		const filteredIds: string[] = [];
+		let droppedSolo = false;
+		for (const id of combatantIds) {
+			const c = this.combatants.get(id);
+			if (c?.type === 'soloMonster') {
+				droppedSolo = true;
+				continue;
+			}
+			filteredIds.push(id);
+		}
+		if (droppedSolo) {
+			ui.notifications?.warn(
+				game.i18n?.localize?.('NIMBLE.zipperInitiative.soloCannotGroup') ??
+					'Solo monsters take their own turns and cannot be added to a group selection.',
+			);
+		}
+		if (filteredIds.length === 0) return;
 		await assignPersistentTurnGroup({
 			combat: this,
-			memberCombatantIds: combatantIds,
+			memberCombatantIds: filteredIds,
 			resolveCurrentTurnIdentity: () => this.#resolveCurrentTurnIdentity(),
 			syncTurnToCombatant: (combatantIdOrIdentity, options) =>
 				this.#syncTurnToCombatant(combatantIdOrIdentity, options),

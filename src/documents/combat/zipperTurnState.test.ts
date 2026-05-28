@@ -2,14 +2,18 @@ import { describe, expect, it } from 'vitest';
 import {
 	buildAppendTurnHistoryUpdate,
 	buildClearTurnHistoryUpdate,
+	buildMarkLastTurnUndoneForCombatantUpdate,
 	buildMarkLastTurnUndoneUpdate,
 	buildPreviousTurnUnwindUpdate,
+	buildSoloOccurrencesSnapshotUpdate,
 	getActedOccurrenceCount,
+	getAllUnactedCombatants,
 	getNextUnactedOccurrence,
 	getRemainingOccurrenceCountForSide,
 	getSoloOccurrencesPerRound,
 	getTotalOccurrencesForCombatant,
 	getTurnHistory,
+	getUnactedCombatantsForSide,
 	hasAnyOccurrenceUnacted,
 	hasInProgressTurn,
 	hasOccurrenceActed,
@@ -24,6 +28,8 @@ type MinimalCombatantShape = {
 	id: string;
 	type: 'character' | 'npc' | 'soloMonster';
 	token?: { disposition?: number };
+	defeated?: boolean;
+	system?: { attributes?: { hp?: { value?: number; max?: number } } };
 };
 
 type MinimalCombatShape = {
@@ -826,5 +832,272 @@ describe('getRemainingOccurrenceCountForSide', () => {
 		});
 		// 3 - 2 = 1
 		expect(getRemainingOccurrenceCountForSide(combat as never, 'gm')).toBe(1);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Lifecycle integration — simulates the full solo-turn flow without spinning
+// up the heavyweight combat document. Each test threads the helpers in the
+// order the combat document actually calls them (selectZipperCombatant →
+// #zipperNextTurn → repeat), so a regression in the bump guard, history
+// shape, or eligibility check shows up here even though we don't exercise
+// the Foundry plumbing.
+// ---------------------------------------------------------------------------
+
+/**
+ * Stand-in for the slice of combat state these tests care about. Mutates the
+ * underlying object so successive calls observe each other's writes, matching
+ * how the real combat document persists between #zipperNextTurn invocations.
+ */
+function applyFlagUpdate(combat: MinimalCombatShape, update: Record<string, unknown>): void {
+	const zipper = combat.flags?.nimble?.zipper;
+	if (!zipper) return;
+	if ('flags.nimble.zipper.actCounter' in update) {
+		zipper.actCounter = update['flags.nimble.zipper.actCounter'] as number;
+	}
+	if ('flags.nimble.zipper.turnHistory' in update) {
+		zipper.turnHistory = update['flags.nimble.zipper.turnHistory'] as TurnHistoryEntry[];
+	}
+	if ('flags.nimble.zipper.soloOccurrencesPerRound' in update) {
+		zipper.soloOccurrencesPerRound = update[
+			'flags.nimble.zipper.soloOccurrencesPerRound'
+		] as number;
+	}
+}
+
+/**
+ * Simulate selectZipperCombatant for one occurrence: append a history entry,
+ * recording occurrenceIndex for solos. Does NOT bump actCounter — that mirrors
+ * the real selectZipperCombatant, which only bumps in #zipperNextTurn.
+ */
+function simulateSelect(
+	combat: MinimalCombatShape,
+	combatant: MinimalCombatantShape,
+	side: 'player' | 'gm',
+): void {
+	const totalOccurrences = getTotalOccurrencesForCombatant(combat as never, combatant as never);
+	const occurrenceIndex =
+		totalOccurrences > 1
+			? Math.max(0, getNextUnactedOccurrence(combat as never, combatant as never))
+			: undefined;
+	const counter = combat.flags?.nimble?.zipper?.actCounter ?? 0;
+	const entry: Omit<TurnHistoryEntry, 'undone'> = {
+		combatantId: combatant.id,
+		side,
+		actOrder: counter + 1,
+		...(occurrenceIndex !== undefined ? { occurrenceIndex } : {}),
+	};
+	const update = buildAppendTurnHistoryUpdate(combat as never, entry);
+	applyFlagUpdate(combat, update);
+}
+
+/**
+ * Simulate #zipperNextTurn end-of-turn: bump the counter (if hasInProgressTurn
+ * reports a pending entry, matching the real guard).
+ */
+function simulateNextTurn(combat: MinimalCombatShape): void {
+	if (!hasInProgressTurn(combat as never)) return;
+	const counter = combat.flags?.nimble?.zipper?.actCounter ?? 0;
+	applyFlagUpdate(combat, { 'flags.nimble.zipper.actCounter': counter + 1 });
+}
+
+describe('lifecycle: solo monster three-turn round', () => {
+	it('boss takes 3 turns, counter bumps once per turn, history grows correctly', () => {
+		const hero1 = makeCharacter('h1');
+		const hero2 = makeCharacter('h2');
+		const hero3 = makeCharacter('h3');
+		const boss = makeSoloMonster('boss');
+		const combat = makeCombat({
+			actCounter: 0,
+			soloOccurrencesPerRound: 3,
+			combatants: [hero1, hero2, hero3, boss],
+			turnHistory: [],
+		});
+
+		// Turn 1: hero1
+		simulateSelect(combat, hero1, 'player');
+		simulateNextTurn(combat);
+		expect(combat.flags?.nimble?.zipper?.actCounter).toBe(1);
+
+		// Turn 2: boss occurrence 0
+		simulateSelect(combat, boss, 'gm');
+		simulateNextTurn(combat);
+		expect(combat.flags?.nimble?.zipper?.actCounter).toBe(2);
+		expect(getActedOccurrenceCount(combat as never, 'boss')).toBe(1);
+
+		// Turn 3: hero2
+		simulateSelect(combat, hero2, 'player');
+		simulateNextTurn(combat);
+		expect(combat.flags?.nimble?.zipper?.actCounter).toBe(3);
+
+		// Turn 4: boss occurrence 1 — THIS is the regression case the cycle 1
+		// fix addresses. Without hasInProgressTurn guard, the counter wouldn't
+		// bump here because the per-combatant `acted` flag was set on turn 2.
+		simulateSelect(combat, boss, 'gm');
+		simulateNextTurn(combat);
+		expect(combat.flags?.nimble?.zipper?.actCounter).toBe(4);
+		expect(getActedOccurrenceCount(combat as never, 'boss')).toBe(2);
+
+		// Turn 5: hero3
+		simulateSelect(combat, hero3, 'player');
+		simulateNextTurn(combat);
+		expect(combat.flags?.nimble?.zipper?.actCounter).toBe(5);
+
+		// Turn 6: boss occurrence 2
+		simulateSelect(combat, boss, 'gm');
+		simulateNextTurn(combat);
+		expect(combat.flags?.nimble?.zipper?.actCounter).toBe(6);
+		expect(getActedOccurrenceCount(combat as never, 'boss')).toBe(3);
+
+		// All occurrences used — boss no longer eligible
+		expect(hasAnyOccurrenceUnacted(combat as never, boss as never)).toBe(false);
+		expect(getNextUnactedOccurrence(combat as never, boss as never)).toBe(-1);
+
+		// History has 6 entries (3 heroes + 3 boss occurrences) with unique actOrder
+		const history = getTurnHistory(combat as never);
+		expect(history).toHaveLength(6);
+		const actOrders = history.map((h) => h.actOrder);
+		expect(actOrders).toEqual([1, 2, 3, 4, 5, 6]);
+
+		// Boss entries have occurrenceIndex 0, 1, 2
+		const bossEntries = history.filter((h) => h.combatantId === 'boss');
+		expect(bossEntries.map((e) => e.occurrenceIndex)).toEqual([0, 1, 2]);
+	});
+
+	it('after selectZipperCombatant for a solo, hasInProgressTurn returns true (turn not yet ended)', () => {
+		const boss = makeSoloMonster('boss');
+		const combat = makeCombat({
+			actCounter: 0,
+			soloOccurrencesPerRound: 3,
+			combatants: [boss],
+			turnHistory: [],
+		});
+		simulateSelect(combat, boss, 'gm');
+		// Counter not bumped yet. History has one entry with actOrder = 1.
+		expect(hasInProgressTurn(combat as never)).toBe(true);
+
+		simulateNextTurn(combat);
+		// After bump, counter == actOrder of latest entry → in-progress = false.
+		expect(hasInProgressTurn(combat as never)).toBe(false);
+	});
+});
+
+describe('lifecycle: GM toggle-acted history sync', () => {
+	it('mark-acted appends a history entry; mark-unacted marks it undone', () => {
+		const hero = makeCharacter('h1');
+		const combat = makeCombat({
+			actCounter: 0,
+			combatants: [hero],
+			turnHistory: [],
+		});
+
+		// Mark acted: simulate toggleZipperActedState's append + bump
+		const counterBefore = combat.flags?.nimble?.zipper?.actCounter ?? 0;
+		applyFlagUpdate(
+			combat,
+			buildAppendTurnHistoryUpdate(combat as never, {
+				combatantId: 'h1',
+				side: 'player',
+				actOrder: counterBefore + 1,
+			}),
+		);
+		applyFlagUpdate(combat, { 'flags.nimble.zipper.actCounter': counterBefore + 1 });
+
+		expect(getActedOccurrenceCount(combat as never, 'h1')).toBe(1);
+		expect(hasAnyOccurrenceUnacted(combat as never, hero as never)).toBe(false);
+
+		// Mark unacted: simulate toggleZipperActedState's mark-undone + decrement
+		const undoneUpdate = buildMarkLastTurnUndoneForCombatantUpdate(combat as never, 'h1');
+		expect(undoneUpdate).not.toBeNull();
+		applyFlagUpdate(combat, undoneUpdate!);
+		applyFlagUpdate(combat, { 'flags.nimble.zipper.actCounter': counterBefore });
+
+		expect(getActedOccurrenceCount(combat as never, 'h1')).toBe(0);
+		expect(hasAnyOccurrenceUnacted(combat as never, hero as never)).toBe(true);
+	});
+
+	it('mark-unacted finds the latest non-undone entry for THIS combatant, not the rightmost overall', () => {
+		const heroA = makeCharacter('a');
+		const heroB = makeCharacter('b');
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'a', side: 'player', actOrder: 1, undone: false },
+			{ combatantId: 'b', side: 'player', actOrder: 2, undone: false },
+		];
+		const combat = makeCombat({
+			actCounter: 2,
+			combatants: [heroA, heroB],
+			turnHistory: history,
+		});
+
+		// Toggling A's acted state should undo A's entry, NOT B's (the rightmost).
+		const update = buildMarkLastTurnUndoneForCombatantUpdate(combat as never, 'a');
+		expect(update).not.toBeNull();
+		const next = update!['flags.nimble.zipper.turnHistory'] as TurnHistoryEntry[];
+		expect(next[0].undone).toBe(true);
+		expect(next[1].undone).toBe(false);
+	});
+
+	it('mark-unacted returns null when the combatant has no non-undone entry', () => {
+		const hero = makeCharacter('h1');
+		const combat = makeCombat({ combatants: [hero], turnHistory: [] });
+		expect(buildMarkLastTurnUndoneForCombatantUpdate(combat as never, 'h1')).toBeNull();
+	});
+});
+
+describe('lifecycle: dead solo combatant', () => {
+	it('a dead solo is excluded from getUnactedCombatantsForSide and getAllUnactedCombatants', () => {
+		const boss = makeSoloMonster('boss');
+		boss.defeated = true;
+		boss.system = { attributes: { hp: { value: 0, max: 100 } } };
+		const combat = makeCombat({
+			soloOccurrencesPerRound: 3,
+			combatants: [boss],
+			turnHistory: [],
+		});
+		// Boss has 3 unacted occurrences in theory, but is dead → filtered out.
+		expect(getUnactedCombatantsForSide(combat as never, 'gm')).toEqual([]);
+		expect(getAllUnactedCombatants(combat as never)).toEqual([]);
+	});
+
+	it('a dead solo with some occurrences already acted still drops out of unacted lists', () => {
+		const boss = makeSoloMonster('boss');
+		boss.defeated = true;
+		boss.system = { attributes: { hp: { value: 0, max: 100 } } };
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'boss', side: 'gm', actOrder: 1, undone: false, occurrenceIndex: 0 },
+		];
+		const combat = makeCombat({
+			soloOccurrencesPerRound: 3,
+			combatants: [boss],
+			turnHistory: history,
+		});
+		expect(getUnactedCombatantsForSide(combat as never, 'gm')).toEqual([]);
+	});
+});
+
+describe('lifecycle: snapshot persistence across round changes', () => {
+	it('soloOccurrencesPerRound stays locked through history changes within a round', () => {
+		const combat = makeCombat({ soloOccurrencesPerRound: 3 });
+		expect(getSoloOccurrencesPerRound(combat as never)).toBe(3);
+		// Simulate history changes (turns happening) — snapshot doesn't move.
+		applyFlagUpdate(
+			combat,
+			buildAppendTurnHistoryUpdate(combat as never, {
+				combatantId: 'boss',
+				side: 'gm',
+				actOrder: 1,
+				occurrenceIndex: 0,
+			}),
+		);
+		expect(getSoloOccurrencesPerRound(combat as never)).toBe(3);
+	});
+
+	it('new round writes a new snapshot (simulating nextRound called with 2 heroes alive)', () => {
+		const combat = makeCombat({ soloOccurrencesPerRound: 3 });
+		// Simulate end-of-round: history cleared, new snapshot written
+		applyFlagUpdate(combat, buildClearTurnHistoryUpdate());
+		applyFlagUpdate(combat, buildSoloOccurrencesSnapshotUpdate(2));
+		expect(getSoloOccurrencesPerRound(combat as never)).toBe(2);
+		expect(getTurnHistory(combat as never)).toEqual([]);
 	});
 });
