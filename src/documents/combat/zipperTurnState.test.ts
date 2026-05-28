@@ -6,6 +6,8 @@ import {
 	buildMarkLastTurnUndoneUpdate,
 	buildPreviousTurnUnwindUpdate,
 	buildSoloOccurrencesSnapshotUpdate,
+	buildZipperCombatFlagUpdate,
+	canSelectCombatantForZipperTurn,
 	getActedOccurrenceCount,
 	getAllUnactedCombatants,
 	getNextUnactedOccurrence,
@@ -15,8 +17,11 @@ import {
 	getTurnHistory,
 	getUnactedCombatantsForSide,
 	hasAnyOccurrenceUnacted,
+	hasFinishedOccurrence,
 	hasInProgressTurn,
 	hasOccurrenceActed,
+	isOccurrenceInProgress,
+	isZipperFirstSidePending,
 	type TurnHistoryEntry,
 } from './zipperTurnState.js';
 
@@ -39,6 +44,8 @@ type MinimalCombatShape = {
 				turnHistory?: TurnHistoryEntry[];
 				actCounter?: number;
 				soloOccurrencesPerRound?: number;
+				firstSidePending?: boolean;
+				currentSide?: 'player' | 'gm';
 			};
 		};
 	};
@@ -53,6 +60,8 @@ function makeCombat(
 		turnHistory?: TurnHistoryEntry[];
 		actCounter?: number;
 		soloOccurrencesPerRound?: number;
+		firstSidePending?: boolean;
+		currentSide?: 'player' | 'gm';
 		combatants?: MinimalCombatantShape[];
 	} = {},
 ): MinimalCombatShape {
@@ -66,6 +75,8 @@ function makeCombat(
 					turnHistory: opts.turnHistory,
 					actCounter: opts.actCounter,
 					soloOccurrencesPerRound: opts.soloOccurrencesPerRound,
+					firstSidePending: opts.firstSidePending,
+					currentSide: opts.currentSide,
 				},
 			},
 		},
@@ -1099,5 +1110,287 @@ describe('lifecycle: snapshot persistence across round changes', () => {
 		applyFlagUpdate(combat, buildSoloOccurrencesSnapshotUpdate(2));
 		expect(getSoloOccurrencesPerRound(combat as never)).toBe(2);
 		expect(getTurnHistory(combat as never)).toEqual([]);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Open-selection / first-side-pending support
+// ---------------------------------------------------------------------------
+
+describe('isZipperFirstSidePending', () => {
+	it('returns false when the flag is missing', () => {
+		const combat = makeCombat();
+		expect(isZipperFirstSidePending(combat as never)).toBe(false);
+	});
+
+	it('returns true when the flag is explicitly true', () => {
+		const combat = makeCombat({ firstSidePending: true });
+		expect(isZipperFirstSidePending(combat as never)).toBe(true);
+	});
+
+	it('returns false when the flag is explicitly false', () => {
+		const combat = makeCombat({ firstSidePending: false });
+		expect(isZipperFirstSidePending(combat as never)).toBe(false);
+	});
+});
+
+describe('buildZipperCombatFlagUpdate — firstSidePending', () => {
+	it('writes the firstSidePending path when the param is provided', () => {
+		const update = buildZipperCombatFlagUpdate({ firstSidePending: true });
+		expect(update['flags.nimble.zipper.firstSidePending']).toBe(true);
+	});
+
+	it('omits the path when the param is undefined', () => {
+		const update = buildZipperCombatFlagUpdate({ awaitingSelection: true });
+		expect('flags.nimble.zipper.firstSidePending' in update).toBe(false);
+	});
+
+	it('supports clearing the flag with firstSidePending: false', () => {
+		const update = buildZipperCombatFlagUpdate({ firstSidePending: false });
+		expect(update['flags.nimble.zipper.firstSidePending']).toBe(false);
+	});
+});
+
+describe('canSelectCombatantForZipperTurn — first-side bypass', () => {
+	function makeWithDispositionCombatants(): {
+		combat: MinimalCombatShape;
+		gmCombatant: MinimalCombatantShape;
+	} {
+		const hero: MinimalCombatantShape = { id: 'h1', type: 'character' };
+		const enemy: MinimalCombatantShape = {
+			id: 'e1',
+			type: 'npc',
+			token: { disposition: -1 },
+		};
+		const combat = makeCombat({ combatants: [hero, enemy] });
+		return { combat, gmCombatant: enemy };
+	}
+
+	it('returns wrongSide when the side does not match and firstSidePending is not set', () => {
+		const { combat, gmCombatant } = makeWithDispositionCombatants();
+		// Expected side is 'player' but enemy is on 'gm' side → wrongSide.
+		const result = canSelectCombatantForZipperTurn(combat as never, gmCombatant.id, 'player');
+		expect(result.valid).toBe(false);
+		expect(result.reason).toBe('wrongSide');
+	});
+
+	it('returns valid for a wrong-side combatant when firstSidePending is true', () => {
+		const hero: MinimalCombatantShape = { id: 'h1', type: 'character' };
+		const enemy: MinimalCombatantShape = {
+			id: 'e1',
+			type: 'npc',
+			token: { disposition: -1 },
+		};
+		const combat = makeCombat({ firstSidePending: true, combatants: [hero, enemy] });
+		// Expected side is 'player' but enemy is on 'gm' side. Bypass active.
+		const result = canSelectCombatantForZipperTurn(combat as never, enemy.id, 'player');
+		expect(result.valid).toBe(true);
+	});
+
+	it('still returns alreadyActed even during first-side bypass', () => {
+		const enemy: MinimalCombatantShape = {
+			id: 'e1',
+			type: 'npc',
+			token: { disposition: -1 },
+		};
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'e1', side: 'gm', actOrder: 1, undone: false },
+		];
+		const combat = makeCombat({
+			firstSidePending: true,
+			turnHistory: history,
+			combatants: [enemy],
+		});
+		// Bypass only relaxes the side check, not the acted check.
+		const result = canSelectCombatantForZipperTurn(combat as never, enemy.id, 'player');
+		expect(result.valid).toBe(false);
+		expect(result.reason).toBe('alreadyActed');
+	});
+});
+
+describe('isOccurrenceInProgress', () => {
+	it('returns false when history is empty', () => {
+		const hero = makeCharacter('h1');
+		const combat = makeCombat({ combatants: [hero] });
+		expect(isOccurrenceInProgress(combat as never, hero as never, 0)).toBe(false);
+	});
+
+	it('returns true when the latest matching entry has actOrder > actCounter (mid-turn)', () => {
+		const hero = makeCharacter('h1');
+		// selectZipperCombatant just ran: history has actOrder=1, counter still 0.
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'h1', side: 'player', actOrder: 1, undone: false },
+		];
+		const combat = makeCombat({ actCounter: 0, turnHistory: history, combatants: [hero] });
+		expect(isOccurrenceInProgress(combat as never, hero as never, 0)).toBe(true);
+	});
+
+	it('returns false when actOrder == actCounter (turn ended)', () => {
+		const hero = makeCharacter('h1');
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'h1', side: 'player', actOrder: 1, undone: false },
+		];
+		const combat = makeCombat({ actCounter: 1, turnHistory: history, combatants: [hero] });
+		expect(isOccurrenceInProgress(combat as never, hero as never, 0)).toBe(false);
+	});
+
+	it('returns false for solo occurrence 0 once turn 1 has ended (only occurrence 1 is in-progress)', () => {
+		const boss = makeSoloMonster('boss');
+		// Turn 1 ended (actOrder=1, counter=1), then turn 2 in-progress (actOrder=2).
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'boss', side: 'gm', actOrder: 1, undone: false, occurrenceIndex: 0 },
+			{ combatantId: 'boss', side: 'gm', actOrder: 2, undone: false, occurrenceIndex: 1 },
+		];
+		const combat = makeCombat({ actCounter: 1, turnHistory: history, combatants: [boss] });
+		expect(isOccurrenceInProgress(combat as never, boss as never, 0)).toBe(false);
+		expect(isOccurrenceInProgress(combat as never, boss as never, 1)).toBe(true);
+	});
+
+	it('returns false when the latest matching entry is undone', () => {
+		const hero = makeCharacter('h1');
+		// selectZipperCombatant then immediate undo before turn end.
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'h1', side: 'player', actOrder: 1, undone: true },
+		];
+		const combat = makeCombat({ actCounter: 0, turnHistory: history, combatants: [hero] });
+		expect(isOccurrenceInProgress(combat as never, hero as never, 0)).toBe(false);
+	});
+});
+
+describe('hasFinishedOccurrence', () => {
+	it('returns false when the occurrence has not acted', () => {
+		const hero = makeCharacter('h1');
+		const combat = makeCombat({ combatants: [hero] });
+		expect(hasFinishedOccurrence(combat as never, hero as never, 0)).toBe(false);
+	});
+
+	it('returns false during the in-progress window (acted but counter not bumped)', () => {
+		// Regression-critical: this is the helper that fixes the "selected card
+		// looks dimmed before the user moves it forward" UX bug.
+		const hero = makeCharacter('h1');
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'h1', side: 'player', actOrder: 1, undone: false },
+		];
+		const combat = makeCombat({ actCounter: 0, turnHistory: history, combatants: [hero] });
+		expect(hasFinishedOccurrence(combat as never, hero as never, 0)).toBe(false);
+	});
+
+	it('returns true once the counter has caught up to the entry actOrder', () => {
+		const hero = makeCharacter('h1');
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'h1', side: 'player', actOrder: 1, undone: false },
+		];
+		const combat = makeCombat({ actCounter: 1, turnHistory: history, combatants: [hero] });
+		expect(hasFinishedOccurrence(combat as never, hero as never, 0)).toBe(true);
+	});
+});
+
+describe('getActedOccurrenceCount — memoization', () => {
+	it('returns the same count across repeated calls with the same history reference', () => {
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'boss', side: 'gm', actOrder: 1, undone: false, occurrenceIndex: 0 },
+			{ combatantId: 'boss', side: 'gm', actOrder: 2, undone: false, occurrenceIndex: 1 },
+		];
+		const combat = makeCombat({ turnHistory: history });
+		expect(getActedOccurrenceCount(combat as never, 'boss')).toBe(2);
+		expect(getActedOccurrenceCount(combat as never, 'boss')).toBe(2);
+		expect(getActedOccurrenceCount(combat as never, 'boss')).toBe(2);
+	});
+
+	it('reflects an updated count when the history array is replaced (reference invalidation)', () => {
+		const history1: TurnHistoryEntry[] = [
+			{ combatantId: 'boss', side: 'gm', actOrder: 1, undone: false, occurrenceIndex: 0 },
+		];
+		const combat = makeCombat({ turnHistory: history1 });
+		expect(getActedOccurrenceCount(combat as never, 'boss')).toBe(1);
+
+		// Foundry update flow: a new array is assigned to the flag path.
+		const history2: TurnHistoryEntry[] = [
+			...history1,
+			{ combatantId: 'boss', side: 'gm', actOrder: 2, undone: false, occurrenceIndex: 1 },
+		];
+		applyFlagUpdate(combat, { 'flags.nimble.zipper.turnHistory': history2 });
+		expect(getActedOccurrenceCount(combat as never, 'boss')).toBe(2);
+	});
+
+	it('keeps separate caches per combat instance (WeakMap key)', () => {
+		const historyA: TurnHistoryEntry[] = [
+			{ combatantId: 'boss', side: 'gm', actOrder: 1, undone: false },
+		];
+		const historyB: TurnHistoryEntry[] = [
+			{ combatantId: 'boss', side: 'gm', actOrder: 1, undone: false },
+			{ combatantId: 'boss', side: 'gm', actOrder: 2, undone: false, occurrenceIndex: 1 },
+		];
+		const combatA = makeCombat({ turnHistory: historyA });
+		const combatB = makeCombat({ turnHistory: historyB });
+		expect(getActedOccurrenceCount(combatA as never, 'boss')).toBe(1);
+		expect(getActedOccurrenceCount(combatB as never, 'boss')).toBe(2);
+	});
+});
+
+describe('buildPreviousTurnUnwindUpdate — first-turn unwind restores firstSidePending', () => {
+	it('sets firstSidePending: true when unwinding the only acted entry of combat', () => {
+		const enemy: MinimalCombatantShape = {
+			id: 'e1',
+			type: 'npc',
+			token: { disposition: -1 },
+		};
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'e1', side: 'gm', actOrder: 1, undone: false },
+		];
+		const combat = makeCombat({ actCounter: 1, turnHistory: history, combatants: [enemy] });
+		const entry = history[0];
+		const { combatFlags } = buildPreviousTurnUnwindUpdate(combat as never, entry, {
+			turnEnded: true,
+		});
+		expect(combatFlags['flags.nimble.zipper.firstSidePending']).toBe(true);
+	});
+
+	it('does NOT set firstSidePending when unwinding a later turn', () => {
+		const enemy: MinimalCombatantShape = {
+			id: 'e1',
+			type: 'npc',
+			token: { disposition: -1 },
+		};
+		const hero: MinimalCombatantShape = { id: 'h1', type: 'character' };
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'h1', side: 'player', actOrder: 1, undone: false },
+			{ combatantId: 'e1', side: 'gm', actOrder: 2, undone: false },
+		];
+		const combat = makeCombat({
+			actCounter: 2,
+			turnHistory: history,
+			combatants: [hero, enemy],
+		});
+		const entry = history[1];
+		const { combatFlags } = buildPreviousTurnUnwindUpdate(combat as never, entry, {
+			turnEnded: true,
+		});
+		expect('flags.nimble.zipper.firstSidePending' in combatFlags).toBe(false);
+	});
+
+	it('ignores already-undone entries when counting toward the first-turn check', () => {
+		const enemy: MinimalCombatantShape = {
+			id: 'e1',
+			type: 'npc',
+			token: { disposition: -1 },
+		};
+		const hero: MinimalCombatantShape = { id: 'h1', type: 'character' };
+		// Two history entries but the first was already undone, so unwinding the
+		// second effectively returns us to the open-selection window.
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'h1', side: 'player', actOrder: 1, undone: true },
+			{ combatantId: 'e1', side: 'gm', actOrder: 2, undone: false },
+		];
+		const combat = makeCombat({
+			actCounter: 1,
+			turnHistory: history,
+			combatants: [hero, enemy],
+		});
+		const entry = history[1];
+		const { combatFlags } = buildPreviousTurnUnwindUpdate(combat as never, entry, {
+			turnEnded: true,
+		});
+		expect(combatFlags['flags.nimble.zipper.firstSidePending']).toBe(true);
 	});
 });
