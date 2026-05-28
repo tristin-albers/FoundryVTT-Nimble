@@ -63,11 +63,12 @@
 
 	// Solo monsters appear as N cards (same Combatant ref). To honor per-card
 	// acted state and X/N badges, each card needs its occurrenceIndex — the
-	// 0-based position among same-combatant cards as we walk the entries.
+	// 0-based position among same-combatant cards as we walk the full ordered
+	// list (NOT the virtualized slice).
 	let entryOccurrenceMap = $derived.by(() => {
 		const map = new Map<string, number>(); // entry.key → occurrenceIndex
 		const counterById = new Map<string, number>();
-		for (const entry of virtualizedAliveEntries.entries) {
+		for (const entry of orderedAliveEntries) {
 			if (entry.kind !== 'combatant') continue;
 			const id = entry.combatant.id;
 			if (!id) continue;
@@ -82,7 +83,7 @@
 	let entryTotalOccurrences = $derived.by(() => {
 		const map = new Map<string, number>(); // combatantId → total
 		if (!currentCombat) return map;
-		for (const entry of virtualizedAliveEntries.entries) {
+		for (const entry of orderedAliveEntries) {
 			if (entry.kind !== 'combatant') continue;
 			const id = entry.combatant.id;
 			if (!id || map.has(id)) continue;
@@ -746,7 +747,11 @@
 											{entryOccurrenceLabel}
 										</div>
 									{/if}
-									{#if isZipperMode && game.user?.isGM && combatStarted}
+									{#if isZipperMode && game.user?.isGM && combatStarted && entryTotalForCombatant <= 1}
+										<!-- Hidden for solo cards: the toggle writes the per-combatant `acted`
+										     flag, which would affect all N cards. For solos, use the Previous
+										     Turn button (chevron-left in the controls) to unwind a single
+										     occurrence via the history-derived path. -->
 										<!-- svelte-ignore a11y_click_events_have_key_events -->
 										<!-- svelte-ignore a11y_no_static_element_interactions -->
 										<div

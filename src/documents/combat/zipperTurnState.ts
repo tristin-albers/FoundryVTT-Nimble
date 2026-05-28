@@ -200,20 +200,49 @@ export function getAliveCountForSide(combat: Combat, side: ZipperSide): number {
 
 /**
  * Side progress snapshot for Feature 6 (tracker indicator) and Feature 7
- * (end-of-side telegraph). `unacted` matches `getUnactedCombatantsForSide(...).length`.
+ * (end-of-side telegraph). Counts in OCCURRENCES (not combatants) so a solo
+ * monster with N turns per round contributes N to the side's total. This is
+ * what the user actually wants to see — "how many turns are left this round
+ * on each side?" not "how many combatants are left."
  */
 export function getZipperSideStats(combat: Combat): {
 	player: { acted: number; total: number; unacted: number };
 	gm: { acted: number; total: number; unacted: number };
 } {
-	const playerTotal = getAliveCountForSide(combat, 'player');
-	const gmTotal = getAliveCountForSide(combat, 'gm');
-	const playerUnacted = getUnactedCombatantsForSide(combat, 'player').length;
-	const gmUnacted = getUnactedCombatantsForSide(combat, 'gm').length;
 	return {
-		player: { acted: playerTotal - playerUnacted, total: playerTotal, unacted: playerUnacted },
-		gm: { acted: gmTotal - gmUnacted, total: gmTotal, unacted: gmUnacted },
+		player: getOccurrenceSideStats(combat, 'player'),
+		gm: getOccurrenceSideStats(combat, 'gm'),
 	};
+}
+
+function getOccurrenceSideStats(
+	combat: Combat,
+	side: ZipperSide,
+): { acted: number; total: number; unacted: number } {
+	const groupSummaries = getMinionGroupSummaries(combat.combatants.contents);
+	const seenGroupIds = new Set<string>();
+	let total = 0;
+	let acted = 0;
+	for (const combatant of combat.combatants.contents) {
+		if (isCombatantDead(combatant)) continue;
+		if (getCombatantZipperSide(combatant) !== side) continue;
+		const groupId = getMinionGroupId(combatant);
+		if (groupId) {
+			if (seenGroupIds.has(groupId)) continue;
+			seenGroupIds.add(groupId);
+			const summary = groupSummaries.get(groupId);
+			if (summary) {
+				const leader = getEffectiveMinionGroupLeader(summary, { aliveOnly: true });
+				if (leader && leader.id !== combatant.id) continue;
+			}
+		}
+		const occurrences = getTotalOccurrencesForCombatant(combat, combatant);
+		const id = combatant.id;
+		const actedCount = id ? getActedOccurrenceCount(combat, id) : 0;
+		total += occurrences;
+		acted += Math.min(occurrences, actedCount);
+	}
+	return { acted, total, unacted: total - acted };
 }
 
 export function hasAllCombatantsActed(combat: Combat): boolean {
