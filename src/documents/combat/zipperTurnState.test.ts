@@ -6,10 +6,12 @@ import {
 	buildPreviousTurnUnwindUpdate,
 	getActedOccurrenceCount,
 	getNextUnactedOccurrence,
+	getRemainingOccurrenceCountForSide,
 	getSoloOccurrencesPerRound,
 	getTotalOccurrencesForCombatant,
 	getTurnHistory,
 	hasAnyOccurrenceUnacted,
+	hasInProgressTurn,
 	hasOccurrenceActed,
 	type TurnHistoryEntry,
 } from './zipperTurnState.js';
@@ -34,7 +36,10 @@ type MinimalCombatShape = {
 			};
 		};
 	};
-	combatants: { get: (id: string) => MinimalCombatantShape | undefined };
+	combatants: {
+		get: (id: string) => MinimalCombatantShape | undefined;
+		contents: MinimalCombatantShape[];
+	};
 };
 
 function makeCombat(
@@ -45,8 +50,9 @@ function makeCombat(
 		combatants?: MinimalCombatantShape[];
 	} = {},
 ): MinimalCombatShape {
+	const combatantList = opts.combatants ?? [];
 	const combatantMap = new Map<string, MinimalCombatantShape>();
-	for (const c of opts.combatants ?? []) combatantMap.set(c.id, c);
+	for (const c of combatantList) combatantMap.set(c.id, c);
 	return {
 		flags: {
 			nimble: {
@@ -57,7 +63,10 @@ function makeCombat(
 				},
 			},
 		},
-		combatants: { get: (id: string) => combatantMap.get(id) },
+		combatants: {
+			get: (id: string) => combatantMap.get(id),
+			contents: combatantList,
+		},
 	};
 }
 
@@ -701,5 +710,121 @@ describe('getNextUnactedOccurrence', () => {
 		];
 		const combat = makeCombat({ turnHistory: history, combatants: [hero] });
 		expect(getNextUnactedOccurrence(combat as never, hero as never)).toBe(-1);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Cycle 1 fixes — hasInProgressTurn + getRemainingOccurrenceCountForSide
+// ---------------------------------------------------------------------------
+
+describe('hasInProgressTurn', () => {
+	it('returns false when history is empty', () => {
+		const combat = makeCombat();
+		expect(hasInProgressTurn(combat as never)).toBe(false);
+	});
+
+	it('returns true when the latest non-undone entry has actOrder > actCounter', () => {
+		// selectZipperCombatant ran (history appended with actOrder=2) but
+		// #zipperNextTurn hasn't bumped the counter yet.
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'a', side: 'player', actOrder: 1, undone: false },
+			{ combatantId: 'b', side: 'gm', actOrder: 2, undone: false },
+		];
+		const combat = makeCombat({ actCounter: 1, turnHistory: history });
+		expect(hasInProgressTurn(combat as never)).toBe(true);
+	});
+
+	it('returns false when the latest non-undone entry has actOrder == actCounter (committed)', () => {
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'a', side: 'player', actOrder: 1, undone: false },
+		];
+		const combat = makeCombat({ actCounter: 1, turnHistory: history });
+		expect(hasInProgressTurn(combat as never)).toBe(false);
+	});
+
+	it('walks past undone entries to find the latest committed/in-progress state', () => {
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'a', side: 'player', actOrder: 1, undone: false },
+			{ combatantId: 'b', side: 'gm', actOrder: 2, undone: true }, // reverted
+		];
+		// Latest non-undone is A (actOrder=1, committed). actCounter was decremented
+		// to 0 by the unwind of B. Now actCounter(0) < A.actOrder(1) → would imply
+		// in-progress, but A is actually committed. The helper checks the LATEST
+		// non-undone entry only, which is A — so it returns true. This is the
+		// correct behavior for the bump-guard use case because if A is "in-progress"
+		// after a re-select, #zipperNextTurn should bump (re-commit it).
+		const combat = makeCombat({ actCounter: 0, turnHistory: history });
+		expect(hasInProgressTurn(combat as never)).toBe(true);
+	});
+
+	it('returns true for solo turn 2 in-progress after turn 1 committed', () => {
+		// After turn 1 ended: counter=1, boss has 1 acted entry.
+		// After selectZipperCombatant for occurrence 1: history adds actOrder=2.
+		// #zipperNextTurn must bump now — this is exactly the regression this fixes.
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'boss', side: 'gm', actOrder: 1, undone: false, occurrenceIndex: 0 },
+			{ combatantId: 'boss', side: 'gm', actOrder: 2, undone: false, occurrenceIndex: 1 },
+		];
+		const combat = makeCombat({ actCounter: 1, turnHistory: history });
+		expect(hasInProgressTurn(combat as never)).toBe(true);
+	});
+});
+
+describe('getRemainingOccurrenceCountForSide', () => {
+	it('returns 0 when no combatants on the side', () => {
+		const combat = makeCombat({ combatants: [] });
+		expect(getRemainingOccurrenceCountForSide(combat as never, 'gm')).toBe(0);
+	});
+
+	it('returns 1 for a single non-solo combatant who has not acted', () => {
+		const npc = makeHostileNpc('npc1');
+		const combat = makeCombat({ combatants: [npc] });
+		expect(getRemainingOccurrenceCountForSide(combat as never, 'gm')).toBe(1);
+	});
+
+	it('returns N for a solo with N occurrences and zero acted', () => {
+		const boss = makeSoloMonster('boss');
+		const combat = makeCombat({ soloOccurrencesPerRound: 3, combatants: [boss] });
+		expect(getRemainingOccurrenceCountForSide(combat as never, 'gm')).toBe(3);
+	});
+
+	it('returns remaining occurrences for a solo with some acted', () => {
+		const boss = makeSoloMonster('boss');
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'boss', side: 'gm', actOrder: 1, undone: false, occurrenceIndex: 0 },
+		];
+		const combat = makeCombat({
+			soloOccurrencesPerRound: 3,
+			turnHistory: history,
+			combatants: [boss],
+		});
+		expect(getRemainingOccurrenceCountForSide(combat as never, 'gm')).toBe(2);
+	});
+
+	it('sums remaining occurrences across multiple combatants on the side', () => {
+		const boss = makeSoloMonster('boss');
+		const npc1 = makeHostileNpc('npc1');
+		const npc2 = makeHostileNpc('npc2');
+		const combat = makeCombat({
+			soloOccurrencesPerRound: 3,
+			combatants: [boss, npc1, npc2],
+		});
+		// boss: 3 unacted + npc1: 1 + npc2: 1 = 5
+		expect(getRemainingOccurrenceCountForSide(combat as never, 'gm')).toBe(5);
+	});
+
+	it('returns 1 when only the last solo occurrence remains (telegraph trigger)', () => {
+		const boss = makeSoloMonster('boss');
+		const history: TurnHistoryEntry[] = [
+			{ combatantId: 'boss', side: 'gm', actOrder: 1, undone: false, occurrenceIndex: 0 },
+			{ combatantId: 'boss', side: 'gm', actOrder: 3, undone: false, occurrenceIndex: 1 },
+		];
+		const combat = makeCombat({
+			soloOccurrencesPerRound: 3,
+			turnHistory: history,
+			combatants: [boss],
+		});
+		// 3 - 2 = 1
+		expect(getRemainingOccurrenceCountForSide(combat as never, 'gm')).toBe(1);
 	});
 });

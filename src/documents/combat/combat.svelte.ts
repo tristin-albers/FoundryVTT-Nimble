@@ -72,8 +72,8 @@ import {
 	getZipperActCounter,
 	getZipperCurrentSide,
 	hasAllCombatantsActed,
+	hasInProgressTurn,
 	hasOccurrenceActed,
-	hasZipperActed,
 	isZipperAwaitingSelection,
 	isZipperInitiativeActive,
 	resolveNextSide,
@@ -796,6 +796,10 @@ class NimbleCombat extends Combat {
 				}),
 				...buildSoloOccurrencesSnapshotUpdate(this.#countAliveHeroes()),
 			} as Parameters<Combat['update']>[0]);
+			// Rebuild turns now that soloOccurrencesPerRound is persisted —
+			// otherwise the initial expansion (line ~752 above) used the default
+			// of 1, interleaving only one solo card per character.
+			this.turns = this.setupTurns();
 		}
 
 		if (preferredStartTurnIdentity) {
@@ -1344,8 +1348,12 @@ class NimbleCombat extends Combat {
 			} as Record<string, unknown>);
 		}
 
-		// Mark the current combatant (and its minion group) as acted
-		if (activeCombatantId && activeCombatant && !hasZipperActed(activeCombatant)) {
+		// Mark the current combatant (and its minion group) as acted and bump the
+		// act counter. Guard is `hasInProgressTurn` (derived from history) rather
+		// than `!hasZipperActed`: the per-combatant flag stays true after a solo's
+		// first turn, which would silently skip counter bumps for its 2nd..Nth
+		// turns and corrupt history actOrder / previousTurn / current-marker.
+		if (activeCombatantId && activeCombatant && hasInProgressTurn(this)) {
 			const actedUpdates = buildMarkActedUpdates(this, activeCombatantId);
 			if (actedUpdates.length > 0) {
 				await this.updateEmbeddedDocuments('Combatant', actedUpdates);

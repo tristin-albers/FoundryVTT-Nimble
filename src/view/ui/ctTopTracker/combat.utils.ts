@@ -5,6 +5,7 @@ import {
 	setExpandedTurnIdentityHint,
 } from '../../../documents/combat/expandedTurnIdentityStore.js';
 import {
+	hasOccurrenceActed,
 	hasZipperActed,
 	isZipperInitiativeActive,
 } from '../../../documents/combat/zipperTurnState.js';
@@ -398,9 +399,11 @@ function findTrackEntryContainingCombatantId(
 export function buildAliveEntries(
 	combatants: Combatant.Implementation[],
 	collapseMonsters: boolean,
+	combat: Combat | null = null,
 ): TrackEntry[] {
 	const entries: TrackEntry[] = [];
 	const occurrenceByCombatantId = new Map<string, number>();
+	const entryOccurrenceByKey = new Map<string, number>();
 	let pendingMonsterStack: Combatant.Implementation[] = [];
 	let monsterStackIndex = 0;
 
@@ -428,10 +431,12 @@ export function buildAliveEntries(
 		const combatantId = getCombatantId(combatant);
 		const occurrence = occurrenceByCombatantId.get(combatantId) ?? 0;
 		occurrenceByCombatantId.set(combatantId, occurrence + 1);
+		const entryKey = combatantId
+			? buildCombatantEntryKey(combatantId, occurrence)
+			: `combatant-${entries.length}`;
+		entryOccurrenceByKey.set(entryKey, occurrence);
 		entries.push({
-			key: combatantId
-				? buildCombatantEntryKey(combatantId, occurrence)
-				: `combatant-${entries.length}`,
+			key: entryKey,
 			kind: 'combatant',
 			combatant,
 		});
@@ -439,15 +444,25 @@ export function buildAliveEntries(
 
 	flushPendingMonsterStack();
 
-	// In zipper mode, insert a separator between acted and un-acted entries
+	// In zipper mode, insert a separator between acted and un-acted entries.
+	// Per-card check: a solo monster's N cards each have their own occurrence
+	// index — using hasZipperActed (per-combatant boolean) would misplace the
+	// separator past all N cards once the solo's flag is set on turn 1.
 	if (isZipperInitiativeActive() && entries.length > 0) {
-		const separatorIndex = entries.findIndex((entry) => {
-			if (entry.kind === 'combatant') return !hasZipperActed(entry.combatant);
+		const isEntryUnacted = (entry: TrackEntry): boolean => {
+			if (entry.kind === 'combatant') {
+				if (!combat) return !hasZipperActed(entry.combatant);
+				const occurrenceIndex = entryOccurrenceByKey.get(entry.key) ?? 0;
+				return !hasOccurrenceActed(combat, entry.combatant, occurrenceIndex);
+			}
 			if (entry.kind === 'monster-stack') {
-				return entry.combatants.some((combatant) => !hasZipperActed(combatant));
+				// Stacks group multiple distinct monsters (not multi-occurrence solos),
+				// so the per-combatant check is still valid here.
+				return entry.combatants.some((c) => !hasZipperActed(c));
 			}
 			return false;
-		});
+		};
+		const separatorIndex = entries.findIndex(isEntryUnacted);
 		// Only insert if there are both acted and un-acted entries
 		if (separatorIndex > 0) {
 			entries.splice(separatorIndex, 0, {

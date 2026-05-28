@@ -642,6 +642,42 @@ export function hasAnyOccurrenceUnacted(
 }
 
 /**
+ * True if the latest non-undone history entry is "in progress" — i.e.,
+ * selectZipperCombatant ran (appended the entry) but #zipperNextTurn hasn't
+ * bumped actCounter yet. Used by #zipperNextTurn to decide whether to bump
+ * (replaces the broken `!hasZipperActed` guard which silently skipped for
+ * solo monsters past their first turn since the per-combatant flag was
+ * permanently true).
+ */
+export function hasInProgressTurn(combat: Combat): boolean {
+	const history = getTurnHistory(combat);
+	for (let i = history.length - 1; i >= 0; i--) {
+		if (history[i].undone) continue;
+		return getZipperActCounter(combat) < history[i].actOrder;
+	}
+	return false;
+}
+
+/**
+ * Sum of remaining (unacted) occurrences across all alive combatants on a
+ * side. Differs from `getUnactedCombatantsForSide(...).length` for solos —
+ * a solo with 2/3 occurrences remaining contributes 2, not 1. Used for the
+ * end-of-side telegraph so amber fires only when literally one turn remains
+ * on the side, not when one combatant remains.
+ */
+export function getRemainingOccurrenceCountForSide(combat: Combat, side: ZipperSide): number {
+	let total = 0;
+	for (const combatant of getUnactedCombatantsForSide(combat, side)) {
+		const id = combatant.id;
+		if (!id) continue;
+		const totalOccurrences = getTotalOccurrencesForCombatant(combat, combatant);
+		const acted = getActedOccurrenceCount(combat, id);
+		total += Math.max(0, totalOccurrences - acted);
+	}
+	return total;
+}
+
+/**
  * For solo selection: which occurrence (0-based) is up next. Equals the
  * acted-count (because the next unacted slot is at index = count). Returns
  * -1 when every occurrence has been used.

@@ -2,6 +2,7 @@
 	import { fade } from 'svelte/transition';
 	import {
 		getCombatantZipperSide,
+		getRemainingOccurrenceCountForSide,
 		getTotalOccurrencesForCombatant,
 		getTurnHistory,
 		getZipperActCounter,
@@ -116,8 +117,13 @@
 			: { player: { acted: 0, total: 0, unacted: 0 }, gm: { acted: 0, total: 0, unacted: 0 } },
 	);
 	// Feature 7 — true when selecting will end the current side's turn.
+	// Counts remaining OCCURRENCES (not combatants), so a solo with 2/3 turns
+	// remaining doesn't falsely telegraph the side as "about to end".
 	let zipperIsLastOnSide = $derived(
-		isZipperMode && zipperAwaitingSelection && zipperSideStats[zipperCurrentSide].unacted === 1,
+		isZipperMode &&
+			currentCombat &&
+			zipperAwaitingSelection &&
+			getRemainingOccurrenceCountForSide(currentCombat, zipperCurrentSide) === 1,
 	);
 	// Feature 4 (current marker) — the in-progress entry is the last non-undone
 	// history entry whose turn HASN'T ended yet. "Turn ended" = actCounter has

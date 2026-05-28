@@ -2,8 +2,8 @@ import { SYSTEM_PATH } from '#system';
 import {
 	getCombatantZipperSide,
 	getNextUnactedOccurrence,
+	getRemainingOccurrenceCountForSide,
 	getTotalOccurrencesForCombatant,
-	getUnactedCombatantsForSide,
 	getZipperActCounter,
 	getZipperCurrentSide,
 	hasAnyOccurrenceUnacted,
@@ -175,11 +175,11 @@ function buildEligibleTokenIds(): Map<string, EligibleTokenInfo> {
 		}
 	}
 
-	// Feature 7 — last-on-side telegraph. Use the canonical unacted-on-side
-	// count (which dedupes minion groups) rather than the eligible-map size,
-	// since the map is filtered by ownership and may show fewer to a player.
-	const unactedOnCurrentSide = getUnactedCombatantsForSide(combat, currentSide).length;
-	if (unactedOnCurrentSide === 1) {
+	// Feature 7 — last-on-side telegraph. Count remaining OCCURRENCES (not
+	// combatants), so a solo with 2/3 turns left doesn't trigger the amber
+	// "last on side" warning. Telegraph fires when literally one turn remains.
+	const remainingOccurrencesOnCurrentSide = getRemainingOccurrenceCountForSide(combat, currentSide);
+	if (remainingOccurrencesOnCurrentSide === 1) {
 		for (const info of eligibleMap.values()) {
 			if (info.side === currentSide) info.isLastOnSide = true;
 		}
