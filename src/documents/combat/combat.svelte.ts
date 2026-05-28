@@ -857,6 +857,17 @@ class NimbleCombat extends Combat {
 
 		await super._onEndTurn(combatant, context);
 
+		// In zipper mode, `#zipperNextTurn` already refills the outgoing combatant
+		// explicitly. _onEndTurn fires whenever Foundry observes a turn-index change
+		// in combat.update() — which happens on every selectZipperCombatant since
+		// it writes `turn: targetIndex`. Foundry fires _onEndTurn for whatever
+		// combatant was at the OLD turn index, which in zipper mode is unrelated to
+		// "who actually just ended their turn." Running the refill here would
+		// silently top off random characters who shouldn't be refilled (the bug:
+		// "ending another player's turn gives back actions to people who already
+		// spent them"). Skip the refill — #zipperNextTurn owns it.
+		if (isZipperInitiativeActive()) return;
+
 		if (combatant.type === 'character') {
 			await combatant.update({
 				'system.actions.base.current': getCombatantBaseActionMax(combatant),
