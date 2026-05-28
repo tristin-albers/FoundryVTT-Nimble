@@ -30,9 +30,9 @@ const ZIPPER_TOOLTIP_KEY = '_nimbleZipperTooltip';
 const ZIPPER_OVERLAY_STATE_KEY = '_nimbleZipperOverlayState';
 
 // Resting opacity for the swords overlay; brightens to full (1.0) on hover.
-const ZIPPER_OVERLAY_RESTING_ALPHA = 0.6;
+const ZIPPER_OVERLAY_RESTING_ALPHA = 0.8;
 // Hesitant-blocked tokens rest dimmer still to read as unavailable.
-const ZIPPER_OVERLAY_HESITANT_ALPHA = 0.35;
+const ZIPPER_OVERLAY_HESITANT_ALPHA = 0.55;
 
 // Bundled crossed-swords icon (game-icons.net, CC BY 3.0) rendered on eligible
 // tokens. White-filled so it can be tinted per side via PIXI's sprite tint.
