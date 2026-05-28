@@ -650,6 +650,10 @@
 									</span>
 								{/if}
 							</li>
+						{:else if entry.kind === 'finished-separator'}
+							<li class="nimble-ct__finished-separator" data-tooltip="Turn complete">
+								<span class="nimble-ct__finished-separator-line"></span>
+							</li>
 						{:else if entry.kind === 'combatant'}
 							{@const actionState = getActionState(entry.combatant)}
 							{@const combatantId = getCombatantId(entry.combatant)}
@@ -2941,6 +2945,23 @@
 	}
 	.nimble-ct__zipper-separator--overflow .nimble-ct__zipper-separator-label {
 		color: hsl(38 92% 65%);
+	}
+	/* Finished/in-progress boundary: a muted grey divider so the active
+	   turn-taker reads as separate from the already-acted pile. Solid line
+	   (not dashed) so it visually contrasts with the green/amber selection
+	   separator on its right. */
+	.nimble-ct__finished-separator {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		height: 100%;
+		margin-inline: 0.2rem;
+	}
+	.nimble-ct__finished-separator-line {
+		width: 0;
+		height: calc(8.4rem * var(--nimble-ct-card-scale, 1));
+		border-left: 2px solid color-mix(in srgb, hsl(0 0% 60%) 55%, transparent);
+		transition: height 140ms ease;
 	}
 	.nimble-ct__portrait--zipper-acted {
 		opacity: 0.55;

@@ -5,8 +5,10 @@ import {
 	setExpandedTurnIdentityHint,
 } from '../../../documents/combat/expandedTurnIdentityStore.js';
 import {
+	hasFinishedOccurrence,
 	hasOccurrenceActed,
 	hasZipperActed,
+	isOccurrenceInProgress,
 	isZipperInitiativeActive,
 } from '../../../documents/combat/zipperTurnState.js';
 import {
@@ -463,11 +465,36 @@ export function buildAliveEntries(
 			return false;
 		};
 		const separatorIndex = entries.findIndex(isEntryUnacted);
-		// Only insert if there are both acted and un-acted entries
+		const isEntryFinished = (entry: TrackEntry): boolean => {
+			if (entry.kind !== 'combatant' || !combat) return false;
+			const occurrenceIndex = entryOccurrenceByKey.get(entry.key) ?? 0;
+			return hasFinishedOccurrence(combat, entry.combatant, occurrenceIndex);
+		};
+		const isEntryInProgress = (entry: TrackEntry): boolean => {
+			if (entry.kind !== 'combatant' || !combat) return false;
+			const occurrenceIndex = entryOccurrenceByKey.get(entry.key) ?? 0;
+			return isOccurrenceInProgress(combat, entry.combatant, occurrenceIndex);
+		};
+		const firstInProgressIndex = entries.findIndex(isEntryInProgress);
+		const hasFinishedBefore =
+			firstInProgressIndex > 0 && isEntryFinished(entries[firstInProgressIndex - 1]);
+
+		// Insert the later separator first so the earlier index stays valid.
+		// Existing zipper-separator: boundary between (finished + in-progress) and
+		// pending — carries the "Players choose / GM chooses" label.
 		if (separatorIndex > 0) {
 			entries.splice(separatorIndex, 0, {
 				key: 'zipper-separator',
 				kind: 'zipper-separator',
+			});
+		}
+		// New finished-separator: boundary between finished and in-progress so the
+		// active turn-taker is visually distinct from the already-acted pile. Only
+		// rendered when at least one finished card sits to its left.
+		if (firstInProgressIndex > 0 && hasFinishedBefore) {
+			entries.splice(firstInProgressIndex, 0, {
+				key: 'finished-separator',
+				kind: 'finished-separator',
 			});
 		}
 	}

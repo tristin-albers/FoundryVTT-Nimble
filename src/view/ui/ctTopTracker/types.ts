@@ -25,7 +25,16 @@ export interface ZipperSeparatorTrackEntry {
 	kind: 'zipper-separator';
 }
 
-export type TrackEntry = CombatantTrackEntry | MonsterStackTrackEntry | ZipperSeparatorTrackEntry;
+export interface FinishedSeparatorTrackEntry {
+	key: string;
+	kind: 'finished-separator';
+}
+
+export type TrackEntry =
+	| CombatantTrackEntry
+	| MonsterStackTrackEntry
+	| ZipperSeparatorTrackEntry
+	| FinishedSeparatorTrackEntry;
 
 export interface CombatantDropPreview {
 	sourceKey: string;
