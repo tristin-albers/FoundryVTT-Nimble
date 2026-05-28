@@ -26,6 +26,7 @@ const ZIPPER_PULSE_KEY = '_nimbleZipperPulseRing';
 const ZIPPER_MULTI_SELECT_KEY = '_nimbleZipperMultiSelected';
 const ZIPPER_HIT_TARGET_KEY = '_nimbleZipperHitTarget';
 const ZIPPER_TOOLTIP_KEY = '_nimbleZipperTooltip';
+const ZIPPER_OVERLAY_STATE_KEY = '_nimbleZipperOverlayState';
 
 // Resting opacity for the swords overlay; brightens to full (1.0) on hover.
 const ZIPPER_OVERLAY_RESTING_ALPHA = 0.6;
@@ -43,10 +44,34 @@ type TokenWithZipperOverlay = Token & {
 	[ZIPPER_HIT_TARGET_KEY]?: PIXI.Container | null;
 	[ZIPPER_MULTI_SELECT_KEY]?: boolean;
 	[ZIPPER_TOOLTIP_KEY]?: PIXI.Container | null;
+	[ZIPPER_OVERLAY_STATE_KEY]?: string | null;
 };
 
 let didRegisterZipperTokenOverlay = false;
 let lastNotifiedAwaitingSide: string | null = null;
+
+// Memoized result of buildEligibleTokenIds for the current animation frame.
+// refreshToken can fire dozens of times per tick (one per moving/animating
+// token); without this cache each call would re-iterate combatants, group
+// summaries, and occurrence counts. Invalidated whenever combat state changes.
+let cachedEligibleMap: Map<string, EligibleTokenInfo> | null = null;
+
+function invalidateEligibleMapCache(): void {
+	cachedEligibleMap = null;
+}
+
+function getEligibleTokenIds(): Map<string, EligibleTokenInfo> {
+	if (cachedEligibleMap) return cachedEligibleMap;
+	const map = buildEligibleTokenIds();
+	cachedEligibleMap = map;
+	// Clear after the current task / microtask drain so the next animation
+	// frame recomputes fresh — but a burst of refreshToken calls inside one
+	// frame shares one computation.
+	queueMicrotask(() => {
+		cachedEligibleMap = null;
+	});
+	return map;
+}
 
 // ---------------------------------------------------------------------------
 // GM multi-select state for ad-hoc group turns
@@ -221,6 +246,7 @@ function removeOverlay(token: TokenWithZipperOverlay): void {
 	}
 
 	hideHesitantTooltip(token);
+	token[ZIPPER_OVERLAY_STATE_KEY] = null;
 }
 
 /**
@@ -535,6 +561,25 @@ function refreshTokenOverlay(
 		return;
 	}
 
+	// Skip rebuilding the PIXI tree when the visible state hasn't changed.
+	// refreshToken fires every animation frame for moving tokens; without this
+	// guard each frame would destroy + reallocate sprites, hit target, and ticker
+	// callback, tanking canvas FPS during any token interaction.
+	const isMultiSelected = multiSelectedCombatantIds.has(info.combatantId);
+	const tokenSize = Math.max(1, Number(token.w ?? 1));
+	const stateHash = [
+		info.combatantId,
+		info.hesitantBlocked ? 1 : 0,
+		info.side,
+		info.isLastOnSide ? 1 : 0,
+		info.occurrenceLabel ?? '',
+		isMultiSelected ? 1 : 0,
+		tokenSize,
+	].join('|');
+	if (token[ZIPPER_OVERLAY_KEY] && token[ZIPPER_OVERLAY_STATE_KEY] === stateHash) {
+		return;
+	}
+
 	createOverlay(
 		token,
 		info.combatantId,
@@ -543,6 +588,7 @@ function refreshTokenOverlay(
 		info.isLastOnSide,
 		info.occurrenceLabel,
 	);
+	token[ZIPPER_OVERLAY_STATE_KEY] = stateHash;
 }
 
 function notifySelectionPhaseIfNeeded(): void {
@@ -585,7 +631,10 @@ function notifySelectionPhaseIfNeeded(): void {
 function refreshAllTokenOverlays(): void {
 	if (!canvas?.ready || !canvas?.tokens) return;
 
-	const eligibleMap = buildEligibleTokenIds();
+	// Force a fresh map for "all tokens" refreshes — these are called from
+	// combat hooks where state has just changed, so any cached map is stale.
+	invalidateEligibleMapCache();
+	const eligibleMap = getEligibleTokenIds();
 	for (const token of canvas.tokens.placeables) {
 		refreshTokenOverlay(token as TokenWithZipperOverlay, eligibleMap);
 	}
@@ -617,7 +666,11 @@ export default function registerZipperTokenOverlay(): void {
 	});
 
 	Hooks.on('refreshToken', (token: Token) => {
-		const eligibleMap = buildEligibleTokenIds();
+		// refreshToken fires per animation frame for moving tokens. Use the
+		// per-tick memoized eligible map so a burst of refreshes shares one
+		// O(combatants) computation, and let the state-hash check inside
+		// refreshTokenOverlay skip the PIXI rebuild when nothing visible changed.
+		const eligibleMap = getEligibleTokenIds();
 		refreshTokenOverlay(token as TokenWithZipperOverlay, eligibleMap);
 	});
 
