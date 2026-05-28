@@ -1367,20 +1367,18 @@ class NimbleCombat extends Combat {
 			} as Record<string, unknown>);
 		}
 
-		// Mark the current combatant (and its minion group) as acted and bump the
-		// act counter. Guard is `hasInProgressTurn` (derived from history) rather
-		// than `!hasZipperActed`: the per-combatant flag stays true after a solo's
-		// first turn, which would silently skip counter bumps for its 2nd..Nth
-		// turns and corrupt history actOrder / previousTurn / current-marker.
-		if (activeCombatantId && activeCombatant && hasInProgressTurn(this)) {
+		// Mark the current combatant (and its minion group) as acted. Guard is
+		// `hasInProgressTurn` (derived from history) rather than `!hasZipperActed`:
+		// the per-combatant flag stays true after a solo's first turn, which would
+		// silently skip counter bumps for its 2nd..Nth turns and corrupt history
+		// actOrder / previousTurn / current-marker.
+		const inProgress =
+			activeCombatantId !== null && activeCombatant !== null && hasInProgressTurn(this);
+		if (inProgress && activeCombatantId) {
 			const actedUpdates = buildMarkActedUpdates(this, activeCombatantId);
 			if (actedUpdates.length > 0) {
 				await this.updateEmbeddedDocuments('Combatant', actedUpdates);
 			}
-			const nextCounter = getZipperActCounter(this) + 1;
-			await this.update(
-				buildZipperCombatFlagUpdate({ actCounter: nextCounter }) as Parameters<Combat['update']>[0],
-			);
 		}
 
 		// Check if all combatants have acted — if so, advance to next round
@@ -1388,20 +1386,31 @@ class NimbleCombat extends Combat {
 			return this.nextRound();
 		}
 
-		// Flip side and enter selection mode
+		// Flip side, bump the act counter, persist the turn index — all in one
+		// combat update. Each separate this.update() call fires updateCombat,
+		// which forces the tracker to re-render and rebuilds token overlays.
+		// Batching three writes into one cuts two of the three re-renders per
+		// turn end, which is the main source of hitching mid-combat.
 		const currentSide = getZipperCurrentSide(this);
 		const nextSide = resolveNextSide(this, currentSide);
-		await this.update(
-			buildZipperCombatFlagUpdate({
-				currentSide: nextSide,
-				awaitingSelection: true,
-			}) as Parameters<Combat['update']>[0],
-		);
 
 		// Rebuild turns so acted cards move left
 		this.turns = this.setupTurns();
 		this.#syncTurnIndexWithAliveTurns();
-		await this.#persistAtomicTurnState({ turn: this.turn });
+
+		const flagUpdate = buildZipperCombatFlagUpdate(
+			inProgress
+				? {
+						actCounter: getZipperActCounter(this) + 1,
+						currentSide: nextSide,
+						awaitingSelection: true,
+					}
+				: {
+						currentSide: nextSide,
+						awaitingSelection: true,
+					},
+		);
+		await this.#persistAtomicTurnState({ turn: this.turn, ...flagUpdate });
 
 		await this.#maybeAutoSelectSoleEligible();
 
