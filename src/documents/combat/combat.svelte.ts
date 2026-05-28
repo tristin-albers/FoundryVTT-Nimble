@@ -59,15 +59,20 @@ import {
 	buildMarkActedUpdates,
 	buildPreviousTurnUnwindUpdate,
 	buildResetAllActedUpdates,
+	buildSoloOccurrencesSnapshotUpdate,
 	buildUnmarkActedUpdates,
 	buildZipperCombatFlagUpdate,
 	canSelectCombatantForZipperTurn,
 	determineFirstSide,
+	getNextUnactedOccurrence,
+	getSoloOccurrencesPerRound,
+	getTotalOccurrencesForCombatant,
 	getTurnHistory,
 	getUnactedCombatantsForSide,
 	getZipperActCounter,
 	getZipperCurrentSide,
 	hasAllCombatantsActed,
+	hasAnyOccurrenceUnacted,
 	hasZipperActed,
 	isZipperAwaitingSelection,
 	isZipperInitiativeActive,
@@ -782,14 +787,15 @@ class NimbleCombat extends Combat {
 				await this.updateEmbeddedDocuments('Combatant', resetUpdates);
 			}
 			const firstSide = determineFirstSide(this);
-			await this.update(
-				buildZipperCombatFlagUpdate({
+			await this.update({
+				...buildZipperCombatFlagUpdate({
 					currentSide: firstSide,
 					roundStartSide: firstSide,
 					awaitingSelection: true,
 					actCounter: 0,
-				}) as Parameters<Combat['update']>[0],
-			);
+				}),
+				...buildSoloOccurrencesSnapshotUpdate(this.#countAliveHeroes()),
+			} as Parameters<Combat['update']>[0]);
 		}
 
 		if (preferredStartTurnIdentity) {
@@ -1264,7 +1270,11 @@ class NimbleCombat extends Combat {
 		if (this.round !== savedRound) this.round = savedRound;
 		if (this.turn !== savedTurn) this.turn = savedTurn;
 		const minionNormalizedTurns = normalizeMinionTurns(aliveTurns);
-		const expandedTurns = expandLegendaryTurns(minionNormalizedTurns);
+		// Use the round-start snapshot for the solo's occurrence count so it
+		// stays locked even if heroes die mid-round. Falls back to live count if
+		// zipper isn't active (non-zipper combats use the legacy behavior).
+		const soloCount = isZipperInitiativeActive() ? getSoloOccurrencesPerRound(this) : undefined;
+		const expandedTurns = expandLegendaryTurns(minionNormalizedTurns, soloCount);
 
 		if (!isZipperInitiativeActive()) return expandedTurns;
 
@@ -1386,6 +1396,7 @@ class NimbleCombat extends Combat {
 					actCounter: 0,
 				}),
 				...buildClearTurnHistoryUpdate(),
+				...buildSoloOccurrencesSnapshotUpdate(this.#countAliveHeroes()),
 			} as Parameters<Combat['update']>[0]);
 			this.turns = this.setupTurns();
 			this.#syncTurnIndexWithAliveTurns();
@@ -1394,6 +1405,22 @@ class NimbleCombat extends Combat {
 		await this.#maybeAutoSelectSoleEligible();
 
 		return result;
+	}
+
+	/**
+	 * Count alive (non-dead, in-combat) character combatants. Used to snapshot
+	 * how many turns each solo monster gets this round. The count is locked at
+	 * round start; hero death mid-round does NOT reduce the boss's remaining
+	 * turns (per design — they "earned" those turns by facing N heroes).
+	 */
+	#countAliveHeroes(): number {
+		let count = 0;
+		for (const combatant of this.combatants.contents) {
+			if (combatant.type !== 'character') continue;
+			if (isCombatantDead(combatant)) continue;
+			count++;
+		}
+		return count;
 	}
 
 	#readZipperFlags(): {
@@ -1452,12 +1479,16 @@ class NimbleCombat extends Combat {
 		const entryCombatant = this.combatants.get(lastEntry.combatantId);
 		if (!entryCombatant) return this as this;
 
-		// Distinguish "selected but turn not yet ended" from "turn fully ended".
-		// In the former, selectZipperCombatant set awaitingSelection=false and
-		// appended history, but neither bumped actCounter nor marked acted.
-		// In the latter, _onEndTurn / #zipperNextTurn did both of those, so the
-		// full unwind has to reverse them.
-		const turnEnded = hasZipperActed(entryCombatant);
+		// Distinguish "selected but turn not yet ended" from "turn fully ended" by
+		// comparing the live actCounter to the history entry's actOrder.
+		// selectZipperCombatant records actOrder = counter+1 BUT doesn't bump the
+		// counter — #zipperNextTurn does that on turn end. So:
+		//   - actCounter < entry.actOrder → turn is in progress (counter not bumped)
+		//   - actCounter ≥ entry.actOrder → turn ended (counter caught up)
+		// This is correct for solos too (per-combatant `acted` flag is unreliable
+		// when a combatant takes multiple turns per round) and for GM-shift-click
+		// groups (the leader's actOrder accounts for the followers' bumps).
+		const turnEnded = getZipperActCounter(this) >= lastEntry.actOrder;
 
 		const { combatFlags, combatantUpdates } = buildPreviousTurnUnwindUpdate(this, lastEntry, {
 			turnEnded,
@@ -1554,11 +1585,18 @@ class NimbleCombat extends Combat {
 		// current actCounter.
 		const groupIds = options?.groupCombatantIds;
 		const isGroup = Array.isArray(groupIds) && groupIds.length > 1;
+		// For solo monsters (multi-turn-per-round), record which occurrence this is
+		// (0-based). Equals current acted-occurrence-count because the next unacted
+		// slot is at index = count.
+		const totalOccurrences = getTotalOccurrencesForCombatant(this, combatant);
+		const occurrenceIndex =
+			totalOccurrences > 1 ? Math.max(0, getNextUnactedOccurrence(this, combatant)) : undefined;
 		const historyEntry = {
 			combatantId,
 			side: currentSide,
 			actOrder: getZipperActCounter(this) + 1,
 			...(isGroup ? { isGroup: true, groupCombatantIds: groupIds } : {}),
+			...(occurrenceIndex !== undefined ? { occurrenceIndex } : {}),
 		};
 
 		// Persist the turn index, awaitingSelection flag, turn identity, and history

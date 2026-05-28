@@ -1,10 +1,12 @@
 import { SYSTEM_PATH } from '#system';
 import {
 	getCombatantZipperSide,
+	getNextUnactedOccurrence,
+	getTotalOccurrencesForCombatant,
 	getUnactedCombatantsForSide,
 	getZipperActCounter,
 	getZipperCurrentSide,
-	hasZipperActed,
+	hasAnyOccurrenceUnacted,
 	isHesitantBlocked,
 	isZipperAwaitingSelection,
 	isZipperInitiativeActive,
@@ -133,7 +135,7 @@ function buildEligibleTokenIds(): Map<string, EligibleTokenInfo> {
 	for (const combatant of combatantsForScene) {
 		if (!combatant.tokenId) continue;
 		if (isCombatantDead(combatant)) continue;
-		if (hasZipperActed(combatant)) continue;
+		if (!hasAnyOccurrenceUnacted(combat, combatant)) continue;
 		if (getCombatantZipperSide(combatant) !== currentSide) continue;
 
 		// For minion groups, only show overlay on the group leader

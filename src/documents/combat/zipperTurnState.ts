@@ -22,6 +22,7 @@ const ZIPPER_ROUND_START_SIDE_PATH = `${ZIPPER_FLAG_ROOT}.roundStartSide`;
 const ZIPPER_AWAITING_SELECTION_PATH = `${ZIPPER_FLAG_ROOT}.awaitingSelection`;
 const ZIPPER_ACT_COUNTER_PATH = `${ZIPPER_FLAG_ROOT}.actCounter`;
 const ZIPPER_TURN_HISTORY_PATH = `${ZIPPER_FLAG_ROOT}.turnHistory`;
+const ZIPPER_SOLO_OCCURRENCES_PATH = `${ZIPPER_FLAG_ROOT}.soloOccurrencesPerRound`;
 
 const ZIPPER_TURN_ACTED_PATH = 'system.zipperTurn.acted';
 const ZIPPER_TURN_ACT_ORDER_PATH = 'system.zipperTurn.actOrder';
@@ -37,6 +38,12 @@ export type TurnHistoryEntry = {
 	undone: boolean;
 	isGroup?: boolean;
 	groupCombatantIds?: string[];
+	/**
+	 * For solo monsters that take N turns per round, this is the 0-based
+	 * occurrence index for this specific turn. Omitted for single-occurrence
+	 * combatants (heroes, regular NPCs, minions).
+	 */
+	occurrenceIndex?: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -134,7 +141,7 @@ export function getUnactedCombatantsForSide(
 
 	return combat.combatants.contents.filter((combatant) => {
 		if (isCombatantDead(combatant)) return false;
-		if (hasZipperActed(combatant)) return false;
+		if (!hasAnyOccurrenceUnacted(combat, combatant)) return false;
 		if (getCombatantZipperSide(combatant) !== side) return false;
 
 		// For minion groups, only include the effective leader
@@ -155,7 +162,7 @@ export function getUnactedCombatantsForSide(
 
 export function getAllUnactedCombatants(combat: Combat): Combatant.Implementation[] {
 	return combat.combatants.contents.filter(
-		(combatant) => !isCombatantDead(combatant) && !hasZipperActed(combatant),
+		(combatant) => !isCombatantDead(combatant) && hasAnyOccurrenceUnacted(combat, combatant),
 	);
 }
 
@@ -381,7 +388,7 @@ export function canSelectCombatantForZipperTurn(
 	const combatant = combat.combatants.get(combatantId);
 	if (!combatant) return { valid: false, reason: 'notFound' };
 	if (isCombatantDead(combatant)) return { valid: false, reason: 'dead' };
-	if (hasZipperActed(combatant)) return { valid: false, reason: 'alreadyActed' };
+	if (!hasAnyOccurrenceUnacted(combat, combatant)) return { valid: false, reason: 'alreadyActed' };
 	if (getCombatantZipperSide(combatant) !== expectedSide) {
 		return { valid: false, reason: 'wrongSide' };
 	}
@@ -539,4 +546,113 @@ function dedupeUnmarkActedUpdates(combat: Combat, ids: string[]): Record<string,
 		}
 	}
 	return updates;
+}
+
+// ---------------------------------------------------------------------------
+// Solo-monster multi-turn support
+//
+// In zipper initiative, a solo monster acts after each hero — so it gets N
+// turns per round where N = alive hero count at round start. We snapshot N
+// at the start of every round and derive per-occurrence acted state from the
+// turn history (instead of mutating per-combatant flags) so the existing undo
+// flow naturally works at the occurrence granularity.
+// ---------------------------------------------------------------------------
+
+/**
+ * Read the round-start snapshot of how many turns each solo monster gets this
+ * round. Defaults to 1 if missing or 0 (degenerate case — clamping avoids a
+ * softlock where the solo would otherwise never be eligible).
+ */
+export function getSoloOccurrencesPerRound(combat: Combat): number {
+	const raw = getFlagValue(combat, ZIPPER_SOLO_OCCURRENCES_PATH);
+	const value = Number(raw ?? 1);
+	if (!Number.isFinite(value) || value < 1) return 1;
+	return Math.trunc(value);
+}
+
+/**
+ * Build an update that snapshots `soloOccurrencesPerRound` for the current
+ * round. Caller is responsible for passing in the alive-hero count (we don't
+ * count here so the function stays pure / testable).
+ */
+export function buildSoloOccurrencesSnapshotUpdate(
+	aliveHeroCount: number,
+): Record<string, unknown> {
+	const safe =
+		Number.isFinite(aliveHeroCount) && aliveHeroCount > 0 ? Math.trunc(aliveHeroCount) : 1;
+	return { [ZIPPER_SOLO_OCCURRENCES_PATH]: safe };
+}
+
+/**
+ * Count non-undone turn-history entries for a given combatantId. This is the
+ * "how many of this combatant's occurrences have acted" derivation used by
+ * `hasOccurrenceActed`, `hasAnyOccurrenceUnacted`, and `getNextUnactedOccurrence`.
+ */
+export function getActedOccurrenceCount(combat: Combat, combatantId: string): number {
+	let count = 0;
+	for (const entry of getTurnHistory(combat)) {
+		if (entry.undone) continue;
+		if (entry.combatantId === combatantId) count++;
+	}
+	return count;
+}
+
+/**
+ * Total turns this combatant gets per round. Solos get N (the round-start
+ * snapshot); every other combatant gets 1.
+ */
+export function getTotalOccurrencesForCombatant(
+	combat: Combat,
+	combatant: Combatant.Implementation,
+): number {
+	if (combatant.type === 'soloMonster') return getSoloOccurrencesPerRound(combat);
+	return 1;
+}
+
+/**
+ * Has this specific occurrence (0-based) of the combatant acted yet?
+ * `count > index` because acted-count is 1-based but occurrence-index is 0-based.
+ */
+export function hasOccurrenceActed(
+	combat: Combat,
+	combatant: Combatant.Implementation,
+	occurrenceIndex: number,
+): boolean {
+	const id = combatant.id;
+	if (!id) return false;
+	return getActedOccurrenceCount(combat, id) > occurrenceIndex;
+}
+
+/**
+ * Eligibility check used by `getUnactedCombatantsForSide`, token overlay
+ * eligibility builder, and the GM's selection validators. Returns true while
+ * the combatant has at least one occurrence left to act.
+ *
+ * For non-solos this collapses to `!hasZipperActed` (acted count 0 → true,
+ * acted count 1 → false).
+ */
+export function hasAnyOccurrenceUnacted(
+	combat: Combat,
+	combatant: Combatant.Implementation,
+): boolean {
+	const total = getTotalOccurrencesForCombatant(combat, combatant);
+	const id = combatant.id;
+	if (!id) return false;
+	return getActedOccurrenceCount(combat, id) < total;
+}
+
+/**
+ * For solo selection: which occurrence (0-based) is up next. Equals the
+ * acted-count (because the next unacted slot is at index = count). Returns
+ * -1 when every occurrence has been used.
+ */
+export function getNextUnactedOccurrence(
+	combat: Combat,
+	combatant: Combatant.Implementation,
+): number {
+	const total = getTotalOccurrencesForCombatant(combat, combatant);
+	const id = combatant.id;
+	if (!id) return -1;
+	const acted = getActedOccurrenceCount(combat, id);
+	return acted < total ? acted : -1;
 }
