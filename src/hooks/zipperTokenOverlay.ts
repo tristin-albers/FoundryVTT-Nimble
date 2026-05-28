@@ -108,6 +108,10 @@ interface EligibleTokenInfo {
 	/** True when this combatant is the last eligible on their side — selecting
 	 *  will pass the turn to the other side (Feature 7 end-of-side telegraph). */
 	isLastOnSide: boolean;
+	/** For solo monsters with N > 1 turns per round, an "X/N" label indicating
+	 *  which occurrence is about to be selected. `undefined` for single-occurrence
+	 *  combatants (label is hidden). */
+	occurrenceLabel: string | undefined;
 }
 
 function buildEligibleTokenIds(): Map<string, EligibleTokenInfo> {
@@ -154,11 +158,19 @@ function buildEligibleTokenIds(): Map<string, EligibleTokenInfo> {
 		if (!isGM && !combatant.actor?.isOwner) continue;
 
 		if (combatant.id) {
+			// For solos: show "X/N" badge so the GM knows which of N turns is up
+			const totalOccurrences = getTotalOccurrencesForCombatant(combat, combatant);
+			const nextOccurrence = getNextUnactedOccurrence(combat, combatant);
+			const occurrenceLabel =
+				totalOccurrences > 1 && nextOccurrence >= 0
+					? `${nextOccurrence + 1}/${totalOccurrences}`
+					: undefined;
 			eligibleMap.set(combatant.tokenId, {
 				combatantId: combatant.id,
 				hesitantBlocked: isHesitantBlocked(combat, combatant.id),
 				side: getCombatantZipperSide(combatant),
 				isLastOnSide: false, // filled in below once we know the total
+				occurrenceLabel,
 			});
 		}
 	}
@@ -280,6 +292,7 @@ function createOverlay(
 	hesitantBlocked = false,
 	side: 'player' | 'gm' = 'player',
 	isLastOnSide = false,
+	occurrenceLabel?: string,
 ): void {
 	removeOverlay(token);
 
@@ -341,6 +354,29 @@ function createOverlay(
 		countLabel.anchor.set(0.5, 0.5);
 		countLabel.position.set(Math.round(swordsSize * 0.45), Math.round(swordsSize * 0.45));
 		container.addChild(countLabel);
+	} else if (occurrenceLabel) {
+		// Solo monster "X/N" badge — tells the GM which of N turns is about to
+		// be taken. Anchored at the bottom-right of the swords sprite so it
+		// reads as a counter underneath the icon.
+		const rendererResolution = Number(
+			canvas?.app?.renderer?.resolution ?? globalThis.devicePixelRatio ?? 1,
+		);
+		const resolution = Math.max(2, Number.isFinite(rendererResolution) ? rendererResolution : 2);
+		const turnLabel = new PIXI.Text(occurrenceLabel, {
+			fontFamily: 'Signika, sans-serif',
+			fontSize: Math.max(10, Math.round(swordsSize * 0.36)),
+			fontWeight: '700',
+			fill: 0xfde68a,
+			stroke: 0x000000,
+			strokeThickness: 3,
+			align: 'center',
+		});
+		turnLabel.resolution = resolution;
+		turnLabel.roundPixels = true;
+		turnLabel.anchor.set(0.5, 0);
+		// Below the swords, slightly offset down from the icon center.
+		turnLabel.position.set(0, Math.round(swordsSize * 0.42));
+		container.addChild(turnLabel);
 	}
 
 	container.position.set(badgeX, badgeY);
@@ -494,7 +530,14 @@ function refreshTokenOverlay(
 		return;
 	}
 
-	createOverlay(token, info.combatantId, info.hesitantBlocked, info.side, info.isLastOnSide);
+	createOverlay(
+		token,
+		info.combatantId,
+		info.hesitantBlocked,
+		info.side,
+		info.isLastOnSide,
+		info.occurrenceLabel,
+	);
 }
 
 function notifySelectionPhaseIfNeeded(): void {

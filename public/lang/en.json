@@ -2310,7 +2310,8 @@
 			"gmShort": "GM",
 			"groupTurn": "Group",
 			"lastHero": "Last hero — selecting will pass to the GM",
-			"lastEnemy": "Last enemy — selecting will pass to the players"
+			"lastEnemy": "Last enemy — selecting will pass to the players",
+			"soloCannotGroup": "Solo monsters take their own turns and cannot be added to a group selection."
 		},
 		"nimbleCombatSystemWindow": {
 			"title": "Combat System",

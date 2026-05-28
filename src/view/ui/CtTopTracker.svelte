@@ -2,10 +2,12 @@
 	import { fade } from 'svelte/transition';
 	import {
 		getCombatantZipperSide,
+		getTotalOccurrencesForCombatant,
 		getTurnHistory,
+		getZipperActCounter,
 		getZipperCurrentSide,
 		getZipperSideStats,
-		hasZipperActed,
+		hasOccurrenceActed,
 		isHesitantBlocked,
 		type TurnHistoryEntry,
 	} from '../../documents/combat/zipperTurnState.js';
@@ -57,6 +59,36 @@
 	let canCurrentUserEndTurn = $derived(trackerViewState.canCurrentUserEndTurn);
 	let activeAllActionsUsed = $derived(trackerViewState.activeAllActionsUsed);
 	let virtualizedAliveEntries = $derived(trackerViewState.virtualizedAliveEntries);
+
+	// Solo monsters appear as N cards (same Combatant ref). To honor per-card
+	// acted state and X/N badges, each card needs its occurrenceIndex — the
+	// 0-based position among same-combatant cards as we walk the entries.
+	let entryOccurrenceMap = $derived.by(() => {
+		const map = new Map<string, number>(); // entry.key → occurrenceIndex
+		const counterById = new Map<string, number>();
+		for (const entry of virtualizedAliveEntries.entries) {
+			if (entry.kind !== 'combatant') continue;
+			const id = entry.combatant.id;
+			if (!id) continue;
+			const current = counterById.get(id) ?? 0;
+			map.set(entry.key, current);
+			counterById.set(id, current + 1);
+		}
+		return map;
+	});
+	// Total occurrences per combatant (1 for non-solos, N for solos). Used to
+	// decide whether to render the "X/N" badge.
+	let entryTotalOccurrences = $derived.by(() => {
+		const map = new Map<string, number>(); // combatantId → total
+		if (!currentCombat) return map;
+		for (const entry of virtualizedAliveEntries.entries) {
+			if (entry.kind !== 'combatant') continue;
+			const id = entry.combatant.id;
+			if (!id || map.has(id)) continue;
+			map.set(id, getTotalOccurrencesForCombatant(currentCombat, entry.combatant));
+		}
+		return map;
+	});
 	let expandedMonsterGroupBars = $derived(trackerViewState.expandedMonsterGroupBars);
 	let roundSeparatorIndex = $derived(trackerViewState.roundSeparatorIndex);
 	let combatStarted = $derived(trackerViewState.combatStarted);
@@ -88,16 +120,18 @@
 		isZipperMode && zipperAwaitingSelection && zipperSideStats[zipperCurrentSide].unacted === 1,
 	);
 	// Feature 4 (current marker) — the in-progress entry is the last non-undone
-	// history entry whose combatant has NOT yet been marked acted. Rendered with
-	// a distinct style so the tracker shows completed / undone / current.
+	// history entry whose turn HASN'T ended yet. "Turn ended" = actCounter has
+	// caught up to the entry's actOrder (mirrors #zipperPreviousTurn's logic).
+	// This is correct for solos (per-combatant `acted` flag is unreliable when a
+	// combatant takes multiple turns per round).
 	let zipperCurrentHistoryKey = $derived.by<string | null>(() => {
 		if (!isZipperMode || !currentCombat) return null;
 		if (zipperAwaitingSelection) return null;
+		const actCounter = getZipperActCounter(currentCombat);
 		for (let i = zipperTurnHistory.length - 1; i >= 0; i--) {
 			const entry = zipperTurnHistory[i];
 			if (entry.undone) continue;
-			const combatant = currentCombat.combatants.get(entry.combatantId);
-			if (combatant && !hasZipperActed(combatant)) {
+			if (actCounter < entry.actOrder) {
 				return `${entry.actOrder}-${entry.combatantId}`;
 			}
 			return null;
@@ -143,8 +177,13 @@
 
 	function getZipperActedSignature(): string {
 		const actedKeys: string[] = [];
+		if (!currentCombat) return '';
 		for (const entry of virtualizedAliveEntries.entries) {
-			if (entry.kind === 'combatant' && hasZipperActed(entry.combatant)) actedKeys.push(entry.key);
+			if (entry.kind !== 'combatant') continue;
+			const occurrenceIndex = entryOccurrenceMap.get(entry.key) ?? 0;
+			if (hasOccurrenceActed(currentCombat, entry.combatant, occurrenceIndex)) {
+				actedKeys.push(entry.key);
+			}
 		}
 		return actedKeys.join('|');
 	}
@@ -424,7 +463,7 @@
 				</div>
 				{#if zipperTurnHistory.length > 0}
 					<ol class="nimble-ct__zipper-turn-history" aria-label="Turn history this round">
-						{#each zipperTurnHistory as entry (`${entry.actOrder}-${entry.combatantId}`)}
+						{#each zipperTurnHistory as entry (`${entry.actOrder}-${entry.combatantId}-${entry.occurrenceIndex ?? 0}`)}
 							{@const historyCombatant = currentCombat?.combatants.get(entry.combatantId)}
 							{@const historyName =
 								historyCombatant?.name ??
@@ -433,6 +472,13 @@
 									: '?')}
 							{@const entryKey = `${entry.actOrder}-${entry.combatantId}`}
 							{@const isCurrent = !entry.undone && entryKey === zipperCurrentHistoryKey}
+							{@const historyOccurrenceSuffix =
+								entry.occurrenceIndex !== undefined &&
+								historyCombatant &&
+								currentCombat &&
+								getTotalOccurrencesForCombatant(currentCombat, historyCombatant) > 1
+									? ` · ${entry.occurrenceIndex + 1}/${getTotalOccurrencesForCombatant(currentCombat, historyCombatant)}`
+									: ''}
 							<li
 								class="nimble-ct__zipper-turn-history-entry"
 								class:nimble-ct__zipper-turn-history-entry--player={entry.side === 'player'}
@@ -440,13 +486,15 @@
 								class:nimble-ct__zipper-turn-history-entry--undone={entry.undone}
 								class:nimble-ct__zipper-turn-history-entry--current={isCurrent}
 								data-tooltip={entry.undone
-									? `${entry.actOrder}. ${historyName} (undone)`
+									? `${entry.actOrder}. ${historyName}${historyOccurrenceSuffix} (undone)`
 									: isCurrent
-										? `${entry.actOrder}. ${historyName} (current turn)`
-										: `${entry.actOrder}. ${historyName}`}
+										? `${entry.actOrder}. ${historyName}${historyOccurrenceSuffix} (current turn)`
+										: `${entry.actOrder}. ${historyName}${historyOccurrenceSuffix}`}
 							>
 								<span class="nimble-ct__zipper-turn-history-order">{entry.actOrder}</span>
-								<span class="nimble-ct__zipper-turn-history-name">{historyName}</span>
+								<span class="nimble-ct__zipper-turn-history-name"
+									>{historyName}{historyOccurrenceSuffix}</span
+								>
 								{#if entry.isGroup}
 									<i class="fa-solid fa-object-group nimble-ct__zipper-turn-history-group-icon"></i>
 								{/if}
@@ -617,7 +665,18 @@
 								!zipperAwaitingSelection}
 							<!-- svelte-ignore a11y_click_events_have_key_events -->
 							<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-							{@const isZipperActed = isZipperMode && hasZipperActed(entry.combatant)}
+							{@const entryOccurrenceIndex = entryOccurrenceMap.get(entry.key) ?? 0}
+							{@const entryTotalForCombatant = entry.combatant.id
+								? (entryTotalOccurrences.get(entry.combatant.id) ?? 1)
+								: 1}
+							{@const entryOccurrenceLabel =
+								entryTotalForCombatant > 1
+									? `${entryOccurrenceIndex + 1}/${entryTotalForCombatant}`
+									: null}
+							{@const isZipperActed =
+								isZipperMode && currentCombat
+									? hasOccurrenceActed(currentCombat, entry.combatant, entryOccurrenceIndex)
+									: false}
 							{@const isZipperHesitantBlocked =
 								isZipperMode && currentCombat && getCombatantId(entry.combatant)
 									? isHesitantBlocked(currentCombat, getCombatantId(entry.combatant)!)
@@ -671,6 +730,14 @@
 									{#if isZipperActed}
 										<div class="nimble-ct__zipper-acted-badge" data-tooltip="Acted this round">
 											<i class="fa-solid fa-check"></i>
+										</div>
+									{/if}
+									{#if isZipperMode && entryOccurrenceLabel}
+										<div
+											class="nimble-ct__zipper-occurrence-badge"
+											data-tooltip={`Turn ${entryOccurrenceLabel} this round`}
+										>
+											{entryOccurrenceLabel}
 										</div>
 									{/if}
 									{#if isZipperMode && game.user?.isGM && combatStarted}
@@ -2875,6 +2942,29 @@
 		border: 1px solid hsl(217 91% 60% / 0.95);
 		color: hsl(220 80% 95%);
 		font-size: 0.65rem;
+		z-index: 10;
+		pointer-events: none;
+		box-shadow: 0 1px 3px color-mix(in srgb, black 40%, transparent);
+	}
+	/* Solo monster "X/N" badge — one per card, indicating which of N turns
+	   this card represents. Top-left so it doesn't collide with the acted
+	   badge (top-right) or the toggle button (bottom-right). */
+	.nimble-ct__zipper-occurrence-badge {
+		position: absolute;
+		top: -0.3rem;
+		left: -0.3rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 1.5rem;
+		padding: 0.1rem 0.3rem;
+		border-radius: 0.25rem;
+		background: color-mix(in srgb, hsl(45 25% 10%) 92%, hsl(45 90% 55%));
+		border: 1px solid hsl(45 90% 55% / 0.85);
+		color: hsl(45 95% 88%);
+		font-size: 0.6rem;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
 		z-index: 10;
 		pointer-events: none;
 		box-shadow: 0 1px 3px color-mix(in srgb, black 40%, transparent);

@@ -72,7 +72,7 @@ import {
 	getZipperActCounter,
 	getZipperCurrentSide,
 	hasAllCombatantsActed,
-	hasAnyOccurrenceUnacted,
+	hasOccurrenceActed,
 	hasZipperActed,
 	isZipperAwaitingSelection,
 	isZipperInitiativeActive,
@@ -1278,22 +1278,37 @@ class NimbleCombat extends Combat {
 
 		if (!isZipperInitiativeActive()) return expandedTurns;
 
-		// In zipper mode: acted combatants sorted by actOrder first, then un-acted in existing order.
-		const acted: Combatant.Implementation[] = [];
+		// In zipper mode: acted combatants sorted by their per-occurrence actOrder
+		// first, then un-acted in existing order. For solos with multiple cards in
+		// expandedTurns, the SAME combatant reference appears N times — we have to
+		// distinguish each card by its occurrence index (left-to-right position
+		// among same-combatant cards) so per-card acted state is honored.
+		const history = getTurnHistory(this);
+		const actOrderByKey = new Map<string, number>();
+		for (const entry of history) {
+			if (entry.undone) continue;
+			// Key includes occurrenceIndex (0 for single-occurrence) so multi-turn
+			// solos get distinct actOrder lookups per card.
+			const occurrence = entry.occurrenceIndex ?? 0;
+			actOrderByKey.set(`${entry.combatantId}::${occurrence}`, entry.actOrder);
+		}
+		type ActedCard = { combatant: Combatant.Implementation; actOrder: number };
+		const acted: ActedCard[] = [];
 		const unacted: Combatant.Implementation[] = [];
+		const occurrenceCounterById = new Map<string, number>();
 		for (const combatant of expandedTurns) {
-			if (hasZipperActed(combatant)) {
-				acted.push(combatant);
+			const id = combatant.id ?? '';
+			const occurrenceIndex = occurrenceCounterById.get(id) ?? 0;
+			occurrenceCounterById.set(id, occurrenceIndex + 1);
+			if (hasOccurrenceActed(this, combatant, occurrenceIndex)) {
+				const actOrder = actOrderByKey.get(`${id}::${occurrenceIndex}`) ?? 0;
+				acted.push({ combatant, actOrder });
 			} else {
 				unacted.push(combatant);
 			}
 		}
-		acted.sort((a, b) => {
-			const aOrder = Number(foundry.utils.getProperty(a, 'system.zipperTurn.actOrder') ?? 0);
-			const bOrder = Number(foundry.utils.getProperty(b, 'system.zipperTurn.actOrder') ?? 0);
-			return aOrder - bOrder;
-		});
-		return [...acted, ...unacted];
+		acted.sort((a, b) => a.actOrder - b.actOrder);
+		return [...acted.map((c) => c.combatant), ...unacted];
 	}
 
 	override async nextTurn(): Promise<this> {
@@ -1651,8 +1666,27 @@ class NimbleCombat extends Combat {
 		if (!isZipperInitiativeActive()) return;
 		if (!game.user?.isGM) return;
 
-		// Deduplicate and validate
-		const uniqueIds = [...new Set(combatantIds)].filter((id) => this.combatants.has(id));
+		// Deduplicate, validate, and exclude solo monsters. Solos take N turns
+		// per round on their own; bundling them into a GM-shift-click group would
+		// confuse the per-occurrence accounting (only the leader gets a history
+		// entry but the per-combatant acted flag write would propagate to all of
+		// the solo's cards). If the user included a solo, drop it and notify.
+		const allInputs = [...new Set(combatantIds)].filter((id) => this.combatants.has(id));
+		const droppedSoloIds: string[] = [];
+		const uniqueIds = allInputs.filter((id) => {
+			const c = this.combatants.get(id);
+			if (c?.type === 'soloMonster') {
+				droppedSoloIds.push(id);
+				return false;
+			}
+			return true;
+		});
+		if (droppedSoloIds.length > 0) {
+			ui.notifications?.warn(
+				game.i18n?.localize?.('NIMBLE.zipperInitiative.soloCannotGroup') ??
+					'Solo monsters take their own turns and cannot be added to a group selection.',
+			);
+		}
 		if (uniqueIds.length < 2) {
 			// Fall back to single select
 			if (uniqueIds.length === 1) return this.selectZipperCombatant(uniqueIds[0]!);
