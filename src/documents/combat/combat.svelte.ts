@@ -731,23 +731,6 @@ class NimbleCombat extends Combat {
 		return update;
 	}
 
-	async #refreshCharacterHeroicReactions(): Promise<void> {
-		const updates = this.combatants.contents.reduce<Record<string, unknown>[]>((acc, combatant) => {
-			if (combatant.type !== 'character' || !combatant.id) return acc;
-			const needsRefresh = HEROIC_REACTIONS.some(
-				(reactionKey) => !getHeroicReactionAvailability(combatant, reactionKey),
-			);
-			if (!needsRefresh) return acc;
-			acc.push({
-				_id: combatant.id,
-				...this.#buildHeroicReactionAvailabilityUpdate(true),
-			});
-			return acc;
-		}, []);
-		if (updates.length < 1) return;
-		await this.updateEmbeddedDocuments('Combatant', updates);
-	}
-
 	#resolveStartCombatTurnIndex(): number {
 		return 0;
 	}
@@ -781,15 +764,52 @@ class NimbleCombat extends Combat {
 			await this.rollInitiative(unrolledCharacterIds, { updateTurn: false });
 		}
 
-		await this.#applyNpcActionResetUpdates();
-		await this.#refreshCharacterHeroicReactions();
+		// Merge NPC action resets, character heroic-reaction refreshes, and the
+		// zipper acted-flag reset into a single Combatant batch. Each separate
+		// `updateEmbeddedDocuments` await fires `updateCombatant` and forces a
+		// tracker re-render; the three calls overlapped on the same Combatants
+		// (a character has both heroic reactions and an acted flag to reset),
+		// so a Map merge by _id is needed before dispatch.
+		const combatantUpdates = new Map<string, Record<string, unknown>>();
+		const mergeCombatantUpdate = (update: Record<string, unknown>) => {
+			const id = update._id as string | undefined;
+			if (!id) return;
+			const existing = combatantUpdates.get(id);
+			combatantUpdates.set(id, existing ? { ...existing, ...update, _id: id } : update);
+		};
 
-		// Zipper initiative: reset acted flags and determine first side
+		for (const combatant of this.combatants.contents) {
+			if (combatant.type === 'character' || !combatant.id) continue;
+			mergeCombatantUpdate({
+				_id: combatant.id,
+				'system.actions.base.current': getCombatantBaseActionMax(combatant),
+			});
+		}
+
+		for (const combatant of this.combatants.contents) {
+			if (combatant.type !== 'character' || !combatant.id) continue;
+			const needsRefresh = HEROIC_REACTIONS.some(
+				(reactionKey) => !getHeroicReactionAvailability(combatant, reactionKey),
+			);
+			if (!needsRefresh) continue;
+			mergeCombatantUpdate({
+				_id: combatant.id,
+				...this.#buildHeroicReactionAvailabilityUpdate(true),
+			});
+		}
+
 		if (isZipperInitiativeActive()) {
-			const resetUpdates = buildResetAllActedUpdates(this);
-			if (resetUpdates.length > 0) {
-				await this.updateEmbeddedDocuments('Combatant', resetUpdates);
+			for (const update of buildResetAllActedUpdates(this)) {
+				mergeCombatantUpdate(update);
 			}
+		}
+
+		if (combatantUpdates.size > 0) {
+			await this.updateEmbeddedDocuments('Combatant', [...combatantUpdates.values()]);
+		}
+
+		// Zipper initiative: determine first side and persist combat flags
+		if (isZipperInitiativeActive()) {
 			const firstSide = determineFirstSide(this);
 			await this.update({
 				...buildZipperCombatFlagUpdate({
