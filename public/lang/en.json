@@ -2301,6 +2301,7 @@
 			"playersChoose": "Players choose",
 			"gmChooses": "GM chooses",
 			"chooseFirstTurn": "Choose first turn",
+			"turnComplete": "Turn complete",
 			"acting": "Turn in progress",
 			"playerTurn": "Player Turn",
 			"gmTurn": "GM Turn",

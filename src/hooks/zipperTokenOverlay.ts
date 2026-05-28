@@ -65,10 +65,11 @@ function getEligibleTokenIds(): Map<string, EligibleTokenInfo> {
 	if (cachedEligibleMap) return cachedEligibleMap;
 	const map = buildEligibleTokenIds();
 	cachedEligibleMap = map;
-	// Clear after the current task / microtask drain so the next animation
-	// frame recomputes fresh — but a burst of refreshToken calls inside one
-	// frame shares one computation.
-	queueMicrotask(() => {
+	// Clear on the next animation frame: refreshToken fires can be interleaved
+	// with other macrotasks within a single frame, so a microtask-scoped clear
+	// would invalidate too eagerly. rAF clears strictly between frames, which
+	// is the granularity at which the eligibility map can meaningfully change.
+	requestAnimationFrame(() => {
 		cachedEligibleMap = null;
 	});
 	return map;
@@ -578,13 +579,17 @@ function refreshTokenOverlay(
 	// callback, tanking canvas FPS during any token interaction.
 	const isMultiSelected = multiSelectedCombatantIds.has(info.combatantId);
 	const tokenSize = Math.max(1, Number(token.w ?? 1));
+	// Include the group's total selected size, not just this token's membership:
+	// the badge count label renders `multiSelectedCombatantIds.size`, so every
+	// member's overlay needs to re-render when the set grows from 2 → 3.
+	const multiSelectSize = isMultiSelected ? multiSelectedCombatantIds.size : 0;
 	const stateHash = [
 		info.combatantId,
 		info.hesitantBlocked ? 1 : 0,
 		info.side,
 		info.isLastOnSide ? 1 : 0,
 		info.occurrenceLabel ?? '',
-		isMultiSelected ? 1 : 0,
+		multiSelectSize,
 		tokenSize,
 	].join('|');
 	if (token[ZIPPER_OVERLAY_KEY] && token[ZIPPER_OVERLAY_STATE_KEY] === stateHash) {

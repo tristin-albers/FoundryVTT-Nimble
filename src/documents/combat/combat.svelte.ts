@@ -87,6 +87,12 @@ import {
 
 const COMBATANT_FALLBACK_KEY = Symbol('nimbleCombatantFallback');
 
+// Per-combat mutual-exclusion lock for the firstSidePending selection window.
+// A player's socket click and the GM's local click can both reach
+// `selectZipperCombatant` while one sits at its `super.update` await — without
+// this lock the second writer stomps the first's roundStartSide.
+const firstSideSelectionLocks = new WeakSet<Combat>();
+
 type CombatWithTurnIdentityHint = Combat & {
 	_nimbleExpandedTurnIdentity?: TurnIdentity | null;
 };
@@ -1418,35 +1424,41 @@ class NimbleCombat extends Combat {
 			}
 		}
 
+		// Bump the act counter BEFORE rebuilding turns. setupTurns reads
+		// isOccurrenceInProgress, which compares each history entry's actOrder
+		// against the live counter; rebuilding pre-bump would partition the
+		// just-acted card as in-progress and shift the alive-turn index by one.
+		// This costs us an extra await vs. fully-batched, but the side flip +
+		// turn index are still batched together below.
+		if (inProgress) {
+			await this.update(
+				buildZipperCombatFlagUpdate({
+					actCounter: getZipperActCounter(this) + 1,
+				}) as Parameters<Combat['update']>[0],
+			);
+		}
+
 		// Check if all combatants have acted — if so, advance to next round
 		if (hasAllCombatantsActed(this)) {
 			return this.nextRound();
 		}
 
-		// Flip side, bump the act counter, persist the turn index — all in one
-		// combat update. Each separate this.update() call fires updateCombat,
-		// which forces the tracker to re-render and rebuilds token overlays.
-		// Batching three writes into one cuts two of the three re-renders per
-		// turn end, which is the main source of hitching mid-combat.
+		// Flip side + persist the turn index in one combat update. Each separate
+		// this.update() call fires updateCombat, which forces the tracker to
+		// re-render and rebuilds token overlays. Batching the remaining two
+		// writes into one still cuts a re-render per turn end.
 		const currentSide = getZipperCurrentSide(this);
 		const nextSide = resolveNextSide(this, currentSide);
 
-		// Rebuild turns so acted cards move left
+		// Rebuild turns so acted cards move left (counter is now bumped, so the
+		// just-acted card correctly lands in the finished zone).
 		this.turns = this.setupTurns();
 		this.#syncTurnIndexWithAliveTurns();
 
-		const flagUpdate = buildZipperCombatFlagUpdate(
-			inProgress
-				? {
-						actCounter: getZipperActCounter(this) + 1,
-						currentSide: nextSide,
-						awaitingSelection: true,
-					}
-				: {
-						currentSide: nextSide,
-						awaitingSelection: true,
-					},
-		);
+		const flagUpdate = buildZipperCombatFlagUpdate({
+			currentSide: nextSide,
+			awaitingSelection: true,
+		});
 		await this.#persistAtomicTurnState({ turn: this.turn, ...flagUpdate });
 
 		await this.#maybeAutoSelectSoleEligible();
@@ -1660,70 +1672,83 @@ class NimbleCombat extends Combat {
 		// sides are eligible (open selection); whichever side acts first becomes
 		// the round-start side for the rest of combat.
 		const firstSidePending = isZipperFirstSidePending(this);
-		const selectedSide = firstSidePending ? getCombatantZipperSide(combatant) : currentSide;
+		// Mutual exclusion during the open-selection window. JS is single-threaded
+		// but `super.update` awaits — a player's socketed click and the GM's local
+		// click can both enter this function while the first call sits at the
+		// await, both seeing `firstSidePending === true`, and the second writer
+		// would stomp the first's roundStartSide. The lock blocks that overlap.
+		if (firstSidePending) {
+			if (firstSideSelectionLocks.has(this)) return;
+			firstSideSelectionLocks.add(this);
+		}
+		try {
+			const selectedSide = firstSidePending ? getCombatantZipperSide(combatant) : currentSide;
 
-		// Rebuild turns and find the target combatant's index.
-		this.turns = this.setupTurns();
-		const turnIdentity: TurnIdentity = { combatantId, occurrence: null };
-		const targetIndex = this.#findTurnIndexByIdentity(this.turns, turnIdentity);
-		if (targetIndex < 0) return;
+			// Rebuild turns and find the target combatant's index.
+			this.turns = this.setupTurns();
+			const turnIdentity: TurnIdentity = { combatantId, occurrence: null };
+			const targetIndex = this.#findTurnIndexByIdentity(this.turns, turnIdentity);
+			if (targetIndex < 0) return;
 
-		// Update local state immediately.
-		this.turn = targetIndex;
-		this.#storeExpandedTurnIdentity(
-			this.#resolveTurnIdentityAtIndex(this.turns, targetIndex) ?? turnIdentity,
-		);
-
-		// Build the turn history entry. actOrder mirrors the value buildMarkActedUpdates
-		// will assign at turn end — both are "next sequential position" relative to the
-		// current actCounter.
-		const groupIds = options?.groupCombatantIds;
-		const isGroup = Array.isArray(groupIds) && groupIds.length > 1;
-		// For solo monsters (multi-turn-per-round), record which occurrence this is
-		// (0-based). Equals current acted-occurrence-count because the next unacted
-		// slot is at index = count.
-		const totalOccurrences = getTotalOccurrencesForCombatant(this, combatant);
-		const occurrenceIndex =
-			totalOccurrences > 1 ? Math.max(0, getNextUnactedOccurrence(this, combatant)) : undefined;
-		const historyEntry = {
-			combatantId,
-			side: selectedSide,
-			actOrder: getZipperActCounter(this) + 1,
-			...(isGroup ? { isGroup: true, groupCombatantIds: groupIds } : {}),
-			...(occurrenceIndex !== undefined ? { occurrenceIndex } : {}),
-		};
-
-		// Persist the turn index, awaitingSelection flag, turn identity, and history
-		// entry in a single update. Bypass #runAtomicTurnStateOperation and the update
-		// override by calling super.update directly — the values are already fully
-		// resolved and the override's re-resolution can fight with our intent.
-		await super.update({
-			turn: targetIndex,
-			...buildZipperCombatFlagUpdate(
-				firstSidePending
-					? {
-							awaitingSelection: false,
-							firstSidePending: false,
-							currentSide: selectedSide,
-							roundStartSide: selectedSide,
-						}
-					: { awaitingSelection: false },
-			),
-			...buildExpandedTurnIdentityUpdate(
+			// Update local state immediately.
+			this.turn = targetIndex;
+			this.#storeExpandedTurnIdentity(
 				this.#resolveTurnIdentityAtIndex(this.turns, targetIndex) ?? turnIdentity,
-			),
-			...buildAppendTurnHistoryUpdate(this, historyEntry),
-		} as Parameters<Combat['update']>[0]);
+			);
 
-		// Solo monster action economy: per Nimble, a solo "acts after each hero"
-		// with 1 action per turn (so total actions/round = N occurrences = hero
-		// count). Without this, the boss spends from a shared pool refilled only
-		// at end of round, effectively giving them ~1 useful turn per round.
-		// Force current = 1 at the start of each solo's turn.
-		if (combatant.type === 'soloMonster') {
-			await combatant.update({
-				'system.actions.base.current': 1,
-			} as Record<string, unknown>);
+			// Build the turn history entry. actOrder mirrors the value buildMarkActedUpdates
+			// will assign at turn end — both are "next sequential position" relative to the
+			// current actCounter.
+			const groupIds = options?.groupCombatantIds;
+			const isGroup = Array.isArray(groupIds) && groupIds.length > 1;
+			// For solo monsters (multi-turn-per-round), record which occurrence this is
+			// (0-based). Equals current acted-occurrence-count because the next unacted
+			// slot is at index = count.
+			const totalOccurrences = getTotalOccurrencesForCombatant(this, combatant);
+			const occurrenceIndex =
+				totalOccurrences > 1 ? Math.max(0, getNextUnactedOccurrence(this, combatant)) : undefined;
+			const historyEntry = {
+				combatantId,
+				side: selectedSide,
+				actOrder: getZipperActCounter(this) + 1,
+				...(isGroup ? { isGroup: true, groupCombatantIds: groupIds } : {}),
+				...(occurrenceIndex !== undefined ? { occurrenceIndex } : {}),
+			};
+
+			// Persist the turn index, awaitingSelection flag, turn identity, and history
+			// entry in a single update. Bypass #runAtomicTurnStateOperation and the update
+			// override by calling super.update directly — the values are already fully
+			// resolved and the override's re-resolution can fight with our intent.
+			await super.update({
+				turn: targetIndex,
+				...buildZipperCombatFlagUpdate(
+					firstSidePending
+						? {
+								awaitingSelection: false,
+								firstSidePending: false,
+								currentSide: selectedSide,
+								roundStartSide: selectedSide,
+							}
+						: { awaitingSelection: false },
+				),
+				...buildExpandedTurnIdentityUpdate(
+					this.#resolveTurnIdentityAtIndex(this.turns, targetIndex) ?? turnIdentity,
+				),
+				...buildAppendTurnHistoryUpdate(this, historyEntry),
+			} as Parameters<Combat['update']>[0]);
+
+			// Solo monster action economy: per Nimble, a solo "acts after each hero"
+			// with 1 action per turn (so total actions/round = N occurrences = hero
+			// count). Without this, the boss spends from a shared pool refilled only
+			// at end of round, effectively giving them ~1 useful turn per round.
+			// Force current = 1 at the start of each solo's turn.
+			if (combatant.type === 'soloMonster') {
+				await combatant.update({
+					'system.actions.base.current': 1,
+				} as Record<string, unknown>);
+			}
+		} finally {
+			if (firstSidePending) firstSideSelectionLocks.delete(this);
 		}
 	}
 

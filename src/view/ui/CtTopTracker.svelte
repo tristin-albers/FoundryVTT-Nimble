@@ -480,7 +480,7 @@
 				</div>
 				{#if zipperTurnHistory.length > 0}
 					<ol class="nimble-ct__zipper-turn-history" aria-label="Turn history this round">
-						{#each zipperTurnHistory as entry, i (`${i}-${entry.actOrder}-${entry.combatantId}-${entry.occurrenceIndex ?? 0}`)}
+						{#each zipperTurnHistory as entry (`${entry.actOrder}-${entry.combatantId}-${entry.occurrenceIndex ?? 0}-${entry.undone ? 'u' : 'a'}`)}
 							{@const historyCombatant = currentCombat?.combatants.get(entry.combatantId)}
 							{@const historyName =
 								historyCombatant?.name ??
@@ -660,7 +660,13 @@
 								{/if}
 							</li>
 						{:else if entry.kind === 'finished-separator'}
-							<li class="nimble-ct__finished-separator" data-tooltip="Turn complete">
+							<li
+								class="nimble-ct__finished-separator"
+								data-tooltip={localizeWithFallback(
+									'NIMBLE.zipperInitiative.turnComplete',
+									'Turn complete',
+								)}
+							>
 								<span class="nimble-ct__finished-separator-line"></span>
 							</li>
 						{:else if entry.kind === 'combatant'}
@@ -795,7 +801,7 @@
 											></i>
 										</div>
 									{/if}
-									{#if isZipperMode && combatStarted && zipperAwaitingSelection && !isZipperActed && currentCombat && getCombatantZipperSide(entry.combatant) === getZipperCurrentSide(currentCombat) && (game.user?.isGM || entry.combatant.actor?.isOwner)}
+									{#if isZipperMode && combatStarted && zipperAwaitingSelection && !isZipperActed && currentCombat && (zipperFirstSidePending || getCombatantZipperSide(entry.combatant) === getZipperCurrentSide(currentCombat)) && (game.user?.isGM || entry.combatant.actor?.isOwner)}
 										<!-- svelte-ignore a11y_click_events_have_key_events -->
 										<!-- svelte-ignore a11y_no_static_element_interactions -->
 										<div

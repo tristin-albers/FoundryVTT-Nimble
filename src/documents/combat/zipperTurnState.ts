@@ -537,8 +537,23 @@ export function buildPreviousTurnUnwindUpdate(
 		[ZIPPER_AWAITING_SELECTION_PATH]: true,
 	};
 
+	// Undoing the very first turn of combat returns us to the open first-side
+	// selection window — otherwise the user has silently traded away the
+	// "either side picks first" choice with no way back. Count non-undone
+	// entries BEFORE applying the markUndone update; exactly 1 means this is
+	// the only acted entry.
+	const nonUndoneBefore = getTurnHistory(combat).reduce(
+		(count, e) => (e.undone ? count : count + 1),
+		0,
+	);
+	const isFirstTurnUnwind = nonUndoneBefore === 1;
+
 	const historyUpdate = buildMarkLastTurnUndoneUpdate(combat);
 	if (historyUpdate) Object.assign(combatFlags, historyUpdate);
+
+	if (isFirstTurnUnwind) {
+		combatFlags[ZIPPER_FIRST_SIDE_PENDING_PATH] = true;
+	}
 
 	const isGroup =
 		entry.isGroup && Array.isArray(entry.groupCombatantIds) && entry.groupCombatantIds.length > 0;
@@ -694,7 +709,39 @@ export function hasOccurrenceActed(
  * which means `selectZipperCombatant` ran but `#zipperNextTurn` hasn't bumped
  * the counter yet. Used by the tracker to give the active card a "middle zone"
  * presentation instead of immediately dimming it as already-acted.
+ *
+ * Memoized by (combat, history-ref, actCounter). The tracker FLIP signature
+ * calls this once per combatant per render; the cache turns that O(combatants ×
+ * history) loop into O(combatants) after the per-render warm-up.
  */
+const inProgressMemo = new WeakMap<
+	Combat,
+	{ history: TurnHistoryEntry[]; actCounter: number; keys: Set<string> }
+>();
+
+function getInProgressKeys(combat: Combat): Set<string> {
+	const history = getTurnHistory(combat);
+	const actCounter = getZipperActCounter(combat);
+	const cached = inProgressMemo.get(combat);
+	if (cached && cached.history === history && cached.actCounter === actCounter) {
+		return cached.keys;
+	}
+	const latestActOrderByKey = new Map<string, number>();
+	for (let i = history.length - 1; i >= 0; i--) {
+		const entry = history[i];
+		if (entry.undone) continue;
+		const key = `${entry.combatantId}::${entry.occurrenceIndex ?? 0}`;
+		if (latestActOrderByKey.has(key)) continue;
+		latestActOrderByKey.set(key, entry.actOrder);
+	}
+	const keys = new Set<string>();
+	for (const [key, actOrder] of latestActOrderByKey) {
+		if (actOrder > actCounter) keys.add(key);
+	}
+	inProgressMemo.set(combat, { history, actCounter, keys });
+	return keys;
+}
+
 export function isOccurrenceInProgress(
 	combat: Combat,
 	combatant: Combatant.Implementation,
@@ -702,17 +749,7 @@ export function isOccurrenceInProgress(
 ): boolean {
 	const id = combatant.id;
 	if (!id) return false;
-	const history = getTurnHistory(combat);
-	const actCounter = getZipperActCounter(combat);
-	for (let i = history.length - 1; i >= 0; i--) {
-		const entry = history[i];
-		if (entry.undone) continue;
-		if (entry.combatantId !== id) continue;
-		const entryOccurrence = entry.occurrenceIndex ?? 0;
-		if (entryOccurrence !== occurrenceIndex) continue;
-		return entry.actOrder > actCounter;
-	}
-	return false;
+	return getInProgressKeys(combat).has(`${id}::${occurrenceIndex}`);
 }
 
 /**
