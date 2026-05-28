@@ -2,9 +2,15 @@
 	import { fade } from 'svelte/transition';
 	import {
 		getCombatantZipperSide,
+		getRemainingOccurrenceCountForSide,
+		getTotalOccurrencesForCombatant,
+		getTurnHistory,
+		getZipperActCounter,
 		getZipperCurrentSide,
-		hasZipperActed,
+		getZipperSideStats,
+		hasOccurrenceActed,
 		isHesitantBlocked,
+		type TurnHistoryEntry,
 	} from '../../documents/combat/zipperTurnState.js';
 	import { getMinionGroupId } from '../../utils/minionGrouping.js';
 	import { createCtTopTrackerState } from './CtTopTracker.state.svelte.js';
@@ -54,6 +60,37 @@
 	let canCurrentUserEndTurn = $derived(trackerViewState.canCurrentUserEndTurn);
 	let activeAllActionsUsed = $derived(trackerViewState.activeAllActionsUsed);
 	let virtualizedAliveEntries = $derived(trackerViewState.virtualizedAliveEntries);
+
+	// Solo monsters appear as N cards (same Combatant ref). To honor per-card
+	// acted state and X/N badges, each card needs its occurrenceIndex — the
+	// 0-based position among same-combatant cards as we walk the full ordered
+	// list (NOT the virtualized slice).
+	let entryOccurrenceMap = $derived.by(() => {
+		const map = new Map<string, number>(); // entry.key → occurrenceIndex
+		const counterById = new Map<string, number>();
+		for (const entry of orderedAliveEntries) {
+			if (entry.kind !== 'combatant') continue;
+			const id = entry.combatant.id;
+			if (!id) continue;
+			const current = counterById.get(id) ?? 0;
+			map.set(entry.key, current);
+			counterById.set(id, current + 1);
+		}
+		return map;
+	});
+	// Total occurrences per combatant (1 for non-solos, N for solos). Used to
+	// decide whether to render the "X/N" badge.
+	let entryTotalOccurrences = $derived.by(() => {
+		const map = new Map<string, number>(); // combatantId → total
+		if (!currentCombat) return map;
+		for (const entry of orderedAliveEntries) {
+			if (entry.kind !== 'combatant') continue;
+			const id = entry.combatant.id;
+			if (!id || map.has(id)) continue;
+			map.set(id, getTotalOccurrencesForCombatant(currentCombat, entry.combatant));
+		}
+		return map;
+	});
 	let expandedMonsterGroupBars = $derived(trackerViewState.expandedMonsterGroupBars);
 	let roundSeparatorIndex = $derived(trackerViewState.roundSeparatorIndex);
 	let combatStarted = $derived(trackerViewState.combatStarted);
@@ -68,6 +105,46 @@
 	let isZipperMode = $derived(trackerViewState.isZipperMode);
 	let zipperCurrentSide = $derived(trackerViewState.zipperCurrentSide);
 	let zipperAwaitingSelection = $derived(trackerViewState.zipperAwaitingSelection);
+
+	// Feature 4 — turn history strip + Feature 6 — side progress indicator.
+	// Reactivity flows from currentCombat (which the tracker store already proxies
+	// to update on combat document changes).
+	let zipperTurnHistory = $derived<TurnHistoryEntry[]>(
+		isZipperMode && currentCombat ? getTurnHistory(currentCombat) : [],
+	);
+	let zipperSideStats = $derived(
+		isZipperMode && currentCombat
+			? getZipperSideStats(currentCombat)
+			: { player: { acted: 0, total: 0, unacted: 0 }, gm: { acted: 0, total: 0, unacted: 0 } },
+	);
+	// Feature 7 — true when selecting will end the current side's turn.
+	// Counts remaining OCCURRENCES (not combatants), so a solo with 2/3 turns
+	// remaining doesn't falsely telegraph the side as "about to end".
+	let zipperIsLastOnSide = $derived(
+		isZipperMode &&
+			currentCombat &&
+			zipperAwaitingSelection &&
+			getRemainingOccurrenceCountForSide(currentCombat, zipperCurrentSide) === 1,
+	);
+	// Feature 4 (current marker) — the in-progress entry is the last non-undone
+	// history entry whose turn HASN'T ended yet. "Turn ended" = actCounter has
+	// caught up to the entry's actOrder (mirrors #zipperPreviousTurn's logic).
+	// This is correct for solos (per-combatant `acted` flag is unreliable when a
+	// combatant takes multiple turns per round).
+	let zipperCurrentHistoryKey = $derived.by<string | null>(() => {
+		if (!isZipperMode || !currentCombat) return null;
+		if (zipperAwaitingSelection) return null;
+		const actCounter = getZipperActCounter(currentCombat);
+		for (let i = zipperTurnHistory.length - 1; i >= 0; i--) {
+			const entry = zipperTurnHistory[i];
+			if (entry.undone) continue;
+			if (actCounter < entry.actOrder) {
+				return `${entry.actOrder}-${entry.combatantId}`;
+			}
+			return null;
+		}
+		return null;
+	});
 	let zipperOverflow = $derived(trackerViewState.zipperOverflow);
 	const handleZipperToggleActed = trackerViewState.handleZipperToggleActed;
 	const handleZipperCardSelect = trackerViewState.handleZipperCardSelect;
@@ -107,8 +184,13 @@
 
 	function getZipperActedSignature(): string {
 		const actedKeys: string[] = [];
+		if (!currentCombat) return '';
 		for (const entry of virtualizedAliveEntries.entries) {
-			if (entry.kind === 'combatant' && hasZipperActed(entry.combatant)) actedKeys.push(entry.key);
+			if (entry.kind !== 'combatant') continue;
+			const occurrenceIndex = entryOccurrenceMap.get(entry.key) ?? 0;
+			if (hasOccurrenceActed(currentCombat, entry.combatant, occurrenceIndex)) {
+				actedKeys.push(entry.key);
+			}
 		}
 		return actedKeys.join('|');
 	}
@@ -336,6 +418,7 @@
 					class:nimble-ct__zipper-side-indicator--player={zipperCurrentSide === 'player'}
 					class:nimble-ct__zipper-side-indicator--gm={zipperCurrentSide === 'gm'}
 					class:nimble-ct__zipper-side-indicator--awaiting={zipperAwaitingSelection}
+					class:nimble-ct__zipper-side-indicator--last-on-side={zipperIsLastOnSide}
 				>
 					{#if zipperAwaitingSelection}
 						<i class="fa-solid fa-hourglass-half"></i>
@@ -348,11 +431,87 @@
 									'NIMBLE.zipperInitiative.selectEnemy',
 									'GM: choose an enemy to act',
 								)}
+						{#if zipperIsLastOnSide}
+							<span class="nimble-ct__zipper-side-indicator-telegraph">
+								<i class="fa-solid fa-arrow-right-arrow-left"></i>
+								{zipperCurrentSide === 'player'
+									? localizeWithFallback(
+											'NIMBLE.zipperInitiative.lastHero',
+											'Last hero — selecting will pass to the GM',
+										)
+									: localizeWithFallback(
+											'NIMBLE.zipperInitiative.lastEnemy',
+											'Last enemy — selecting will pass to the players',
+										)}
+							</span>
+						{/if}
 					{:else}
 						<i class="fa-solid fa-dice-d20"></i>
 						{localizeWithFallback('NIMBLE.zipperInitiative.acting', 'Turn in progress')}
 					{/if}
 				</div>
+				<div class="nimble-ct__zipper-side-progress" aria-label="Side turn progress">
+					<span
+						class="nimble-ct__zipper-side-progress-chip nimble-ct__zipper-side-progress-chip--player"
+						class:nimble-ct__zipper-side-progress-chip--current={zipperCurrentSide === 'player'}
+					>
+						<i class="fa-solid fa-shield-halved"></i>
+						{localizeWithFallback('NIMBLE.zipperInitiative.heroesShort', 'Heroes')}
+						{zipperSideStats.player.acted}/{zipperSideStats.player.total}
+					</span>
+					<span
+						class="nimble-ct__zipper-side-progress-chip nimble-ct__zipper-side-progress-chip--gm"
+						class:nimble-ct__zipper-side-progress-chip--current={zipperCurrentSide === 'gm'}
+					>
+						<i class="fa-solid fa-skull"></i>
+						{localizeWithFallback('NIMBLE.zipperInitiative.gmShort', 'GM')}
+						{zipperSideStats.gm.acted}/{zipperSideStats.gm.total}
+					</span>
+				</div>
+				{#if zipperTurnHistory.length > 0}
+					<ol class="nimble-ct__zipper-turn-history" aria-label="Turn history this round">
+						{#each zipperTurnHistory as entry (`${entry.actOrder}-${entry.combatantId}-${entry.occurrenceIndex ?? 0}`)}
+							{@const historyCombatant = currentCombat?.combatants.get(entry.combatantId)}
+							{@const historyName =
+								historyCombatant?.name ??
+								(entry.isGroup
+									? localizeWithFallback('NIMBLE.zipperInitiative.groupTurn', 'Group')
+									: '?')}
+							{@const entryKey = `${entry.actOrder}-${entry.combatantId}`}
+							{@const isCurrent = !entry.undone && entryKey === zipperCurrentHistoryKey}
+							{@const historyOccurrenceSuffix =
+								entry.occurrenceIndex !== undefined &&
+								historyCombatant &&
+								currentCombat &&
+								getTotalOccurrencesForCombatant(currentCombat, historyCombatant) > 1
+									? ` · ${entry.occurrenceIndex + 1}/${getTotalOccurrencesForCombatant(currentCombat, historyCombatant)}`
+									: ''}
+							<li
+								class="nimble-ct__zipper-turn-history-entry"
+								class:nimble-ct__zipper-turn-history-entry--player={entry.side === 'player'}
+								class:nimble-ct__zipper-turn-history-entry--gm={entry.side === 'gm'}
+								class:nimble-ct__zipper-turn-history-entry--undone={entry.undone}
+								class:nimble-ct__zipper-turn-history-entry--current={isCurrent}
+								data-tooltip={entry.undone
+									? `${entry.actOrder}. ${historyName}${historyOccurrenceSuffix} (undone)`
+									: isCurrent
+										? `${entry.actOrder}. ${historyName}${historyOccurrenceSuffix} (current turn)`
+										: `${entry.actOrder}. ${historyName}${historyOccurrenceSuffix}`}
+							>
+								<span class="nimble-ct__zipper-turn-history-order">{entry.actOrder}</span>
+								<span class="nimble-ct__zipper-turn-history-name"
+									>{historyName}{historyOccurrenceSuffix}</span
+								>
+								{#if entry.isGroup}
+									<i class="fa-solid fa-object-group nimble-ct__zipper-turn-history-group-icon"></i>
+								{/if}
+								{#if entry.undone}
+									<i class="fa-solid fa-rotate-left nimble-ct__zipper-turn-history-undone-icon"></i>
+								{/if}
+							</li>
+						{/each}
+					</ol>
+				{/if}
 			{/if}
 			{#if turnGroupSelectionActive}
 				<div class="nimble-ct__group-confirm-bar">
@@ -513,7 +672,18 @@
 								!zipperAwaitingSelection}
 							<!-- svelte-ignore a11y_click_events_have_key_events -->
 							<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-							{@const isZipperActed = isZipperMode && hasZipperActed(entry.combatant)}
+							{@const entryOccurrenceIndex = entryOccurrenceMap.get(entry.key) ?? 0}
+							{@const entryTotalForCombatant = entry.combatant.id
+								? (entryTotalOccurrences.get(entry.combatant.id) ?? 1)
+								: 1}
+							{@const entryOccurrenceLabel =
+								entryTotalForCombatant > 1
+									? `${entryOccurrenceIndex + 1}/${entryTotalForCombatant}`
+									: null}
+							{@const isZipperActed =
+								isZipperMode && currentCombat
+									? hasOccurrenceActed(currentCombat, entry.combatant, entryOccurrenceIndex)
+									: false}
 							{@const isZipperHesitantBlocked =
 								isZipperMode && currentCombat && getCombatantId(entry.combatant)
 									? isHesitantBlocked(currentCombat, getCombatantId(entry.combatant)!)
@@ -569,7 +739,19 @@
 											<i class="fa-solid fa-check"></i>
 										</div>
 									{/if}
-									{#if isZipperMode && game.user?.isGM && combatStarted}
+									{#if isZipperMode && entryOccurrenceLabel}
+										<div
+											class="nimble-ct__zipper-occurrence-badge"
+											data-tooltip={`Turn ${entryOccurrenceLabel} this round`}
+										>
+											{entryOccurrenceLabel}
+										</div>
+									{/if}
+									{#if isZipperMode && game.user?.isGM && combatStarted && entryTotalForCombatant <= 1}
+										<!-- Hidden for solo cards: the toggle writes the per-combatant `acted`
+										     flag, which would affect all N cards. For solos, use the Previous
+										     Turn button (chevron-left in the controls) to unwind a single
+										     occurrence via the history-derived path. -->
 										<!-- svelte-ignore a11y_click_events_have_key_events -->
 										<!-- svelte-ignore a11y_no_static_element_interactions -->
 										<div
@@ -2775,6 +2957,29 @@
 		pointer-events: none;
 		box-shadow: 0 1px 3px color-mix(in srgb, black 40%, transparent);
 	}
+	/* Solo monster "X/N" badge — one per card, indicating which of N turns
+	   this card represents. Top-left so it doesn't collide with the acted
+	   badge (top-right) or the toggle button (bottom-right). */
+	.nimble-ct__zipper-occurrence-badge {
+		position: absolute;
+		top: -0.3rem;
+		left: -0.3rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 1.5rem;
+		padding: 0.1rem 0.3rem;
+		border-radius: 0.25rem;
+		background: color-mix(in srgb, hsl(45 25% 10%) 92%, hsl(45 90% 55%));
+		border: 1px solid hsl(45 90% 55% / 0.85);
+		color: hsl(45 95% 88%);
+		font-size: 0.6rem;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+		z-index: 10;
+		pointer-events: none;
+		box-shadow: 0 1px 3px color-mix(in srgb, black 40%, transparent);
+	}
 	.nimble-ct__zipper-toggle {
 		position: absolute;
 		bottom: -0.2rem;
@@ -2878,6 +3083,117 @@
 		background: color-mix(in srgb, hsl(0 60% 25%) 85%, transparent);
 		border-color: color-mix(in srgb, hsl(0 71% 45%) 50%, transparent);
 		color: hsl(0 71% 80%);
+	}
+	/* Feature 7 — end-of-side telegraph: amber accent when this is the last
+	   selectable combatant on the current side (clicking ends the side's turn). */
+	.nimble-ct__zipper-side-indicator--last-on-side {
+		box-shadow: 0 0 0 1px color-mix(in srgb, hsl(40 90% 55%) 60%, transparent) inset;
+	}
+	.nimble-ct__zipper-side-indicator-telegraph {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		margin-left: 0.5rem;
+		padding-left: 0.5rem;
+		border-left: 1px solid color-mix(in srgb, hsl(0 0% 100%) 25%, transparent);
+		color: hsl(40 90% 70%);
+		font-weight: 500;
+	}
+
+	/* Feature 6 — side progress chips */
+	.nimble-ct__zipper-side-progress {
+		position: absolute;
+		top: -1.5rem;
+		left: calc(50% + 9rem);
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
+		font-size: 0.65rem;
+		font-weight: 600;
+		white-space: nowrap;
+		pointer-events: none;
+		z-index: 20;
+	}
+	.nimble-ct__zipper-side-progress-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		padding: 0.15rem 0.45rem;
+		border-radius: 0.25rem;
+		background: color-mix(in srgb, hsl(220 15% 15%) 85%, transparent);
+		border: 1px solid color-mix(in srgb, hsl(0 0% 100%) 12%, transparent);
+		color: hsl(0 0% 65%);
+		opacity: 0.75;
+	}
+	.nimble-ct__zipper-side-progress-chip--current {
+		opacity: 1;
+	}
+	.nimble-ct__zipper-side-progress-chip--player.nimble-ct__zipper-side-progress-chip--current {
+		color: hsl(142 71% 80%);
+		border-color: color-mix(in srgb, hsl(142 71% 45%) 50%, transparent);
+	}
+	.nimble-ct__zipper-side-progress-chip--gm.nimble-ct__zipper-side-progress-chip--current {
+		color: hsl(0 71% 80%);
+		border-color: color-mix(in srgb, hsl(0 71% 45%) 50%, transparent);
+	}
+
+	/* Feature 4 — turn history strip */
+	.nimble-ct__zipper-turn-history {
+		position: absolute;
+		top: -3rem;
+		left: 50%;
+		transform: translateX(-50%);
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		font-size: 0.65rem;
+		font-weight: 600;
+		pointer-events: auto;
+		z-index: 20;
+	}
+	.nimble-ct__zipper-turn-history-entry {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.2rem;
+		padding: 0.1rem 0.4rem;
+		border-radius: 0.2rem;
+		background: color-mix(in srgb, hsl(220 15% 15%) 85%, transparent);
+		border: 1px solid color-mix(in srgb, hsl(0 0% 100%) 12%, transparent);
+		color: hsl(0 0% 75%);
+	}
+	.nimble-ct__zipper-turn-history-entry--player {
+		border-color: color-mix(in srgb, hsl(142 71% 45%) 40%, transparent);
+	}
+	.nimble-ct__zipper-turn-history-entry--gm {
+		border-color: color-mix(in srgb, hsl(0 71% 45%) 40%, transparent);
+	}
+	.nimble-ct__zipper-turn-history-entry--undone {
+		opacity: 0.45;
+		text-decoration: line-through;
+	}
+	.nimble-ct__zipper-turn-history-entry--current {
+		background: color-mix(in srgb, hsl(45 90% 25%) 85%, transparent);
+		border-color: color-mix(in srgb, hsl(45 90% 55%) 80%, transparent);
+		color: hsl(45 95% 88%);
+		box-shadow: 0 0 0 1px color-mix(in srgb, hsl(45 90% 55%) 50%, transparent);
+	}
+	.nimble-ct__zipper-turn-history-order {
+		font-variant-numeric: tabular-nums;
+		opacity: 0.6;
+	}
+	.nimble-ct__zipper-turn-history-name {
+		max-width: 6rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.nimble-ct__zipper-turn-history-group-icon,
+	.nimble-ct__zipper-turn-history-undone-icon {
+		font-size: 0.55rem;
+		opacity: 0.7;
 	}
 
 	/* Turn group selection */

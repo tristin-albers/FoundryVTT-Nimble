@@ -146,7 +146,11 @@ export class CtTopTrackerStore {
 	);
 
 	aliveEntries = $derived.by(() =>
-		buildAliveEntries(this.sceneAliveCombatants, this.shouldCollapseMonsterCards),
+		buildAliveEntries(
+			this.sceneAliveCombatants,
+			this.shouldCollapseMonsterCards,
+			this.currentCombat,
+		),
 	);
 
 	activeCombatantId = $derived.by(() => {
