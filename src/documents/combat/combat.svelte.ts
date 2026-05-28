@@ -57,6 +57,7 @@ import {
 	buildAppendTurnHistoryUpdate,
 	buildClearTurnHistoryUpdate,
 	buildMarkActedUpdates,
+	buildMarkLastTurnUndoneForCombatantUpdate,
 	buildPreviousTurnUnwindUpdate,
 	buildResetAllActedUpdates,
 	buildSoloOccurrencesSnapshotUpdate,
@@ -64,6 +65,8 @@ import {
 	buildZipperCombatFlagUpdate,
 	canSelectCombatantForZipperTurn,
 	determineFirstSide,
+	getActedOccurrenceCount,
+	getCombatantZipperSide,
 	getNextUnactedOccurrence,
 	getSoloOccurrencesPerRound,
 	getTotalOccurrencesForCombatant,
@@ -72,6 +75,7 @@ import {
 	getZipperActCounter,
 	getZipperCurrentSide,
 	hasAllCombatantsActed,
+	hasAnyOccurrenceUnacted,
 	hasInProgressTurn,
 	hasOccurrenceActed,
 	isZipperAwaitingSelection,
@@ -1728,25 +1732,55 @@ class NimbleCombat extends Combat {
 	/**
 	 * GM-only override to manually mark/unmark a combatant as acted.
 	 * Does not flip side or trigger selection mode — pure bookkeeping correction.
+	 *
+	 * Must keep the turn-history in sync because the rest of the zipper code
+	 * derives acted state from history (not the per-combatant flag). Without
+	 * history writes, this button would silently no-op for all combatants in
+	 * the refactored derive-from-history model.
 	 */
 	async toggleZipperActedState(combatantId: string, acted: boolean): Promise<void> {
 		if (!isZipperInitiativeActive()) return;
 		if (!game.user?.isGM) return;
 
+		const combatant = this.combatants.get(combatantId);
+		if (!combatant) return;
+
 		if (acted) {
+			// Skip if every occurrence is already acted (the toggle would over-fill).
+			if (!hasAnyOccurrenceUnacted(this, combatant)) return;
+
+			const totalOccurrences = getTotalOccurrencesForCombatant(this, combatant);
+			const occurrenceIndex = getNextUnactedOccurrence(this, combatant);
 			const actedUpdates = buildMarkActedUpdates(this, combatantId);
 			if (actedUpdates.length > 0) {
 				await this.updateEmbeddedDocuments('Combatant', actedUpdates);
 			}
 			const nextCounter = getZipperActCounter(this) + 1;
-			await this.update(
-				buildZipperCombatFlagUpdate({ actCounter: nextCounter }) as Parameters<Combat['update']>[0],
-			);
+			await this.update({
+				...buildZipperCombatFlagUpdate({ actCounter: nextCounter }),
+				...buildAppendTurnHistoryUpdate(this, {
+					combatantId,
+					side: getCombatantZipperSide(combatant),
+					actOrder: nextCounter,
+					...(totalOccurrences > 1 ? { occurrenceIndex: Math.max(0, occurrenceIndex) } : {}),
+				}),
+			} as Parameters<Combat['update']>[0]);
 		} else {
+			// Skip if there's nothing to undo (no non-undone history entry for this combatant).
+			const actedCount = combatantId ? getActedOccurrenceCount(this, combatantId) : 0;
+			if (actedCount === 0) return;
+
 			const unactedUpdates = buildUnmarkActedUpdates(this, combatantId);
 			if (unactedUpdates.length > 0) {
 				await this.updateEmbeddedDocuments('Combatant', unactedUpdates);
 			}
+			const undoneUpdate = buildMarkLastTurnUndoneForCombatantUpdate(this, combatantId);
+			if (!undoneUpdate) return; // nothing to undo
+			const nextCounter = Math.max(0, getZipperActCounter(this) - 1);
+			await this.update({
+				...buildZipperCombatFlagUpdate({ actCounter: nextCounter }),
+				...undoneUpdate,
+			} as Parameters<Combat['update']>[0]);
 		}
 
 		this.turns = this.setupTurns();

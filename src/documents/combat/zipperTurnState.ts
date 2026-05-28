@@ -446,6 +446,31 @@ export function buildAppendTurnHistoryUpdate(
 }
 
 /**
+ * Mark the latest non-undone history entry for a SPECIFIC combatant as undone.
+ * Used by the GM toggle-acted button (unmark side) so we undo the right
+ * combatant's most recent turn, not just the rightmost-overall entry.
+ * Returns null if no matching non-undone entry exists.
+ */
+export function buildMarkLastTurnUndoneForCombatantUpdate(
+	combat: Combat,
+	combatantId: string,
+): Record<string, unknown> | null {
+	const existing = getTurnHistory(combat);
+	let targetIndex = -1;
+	for (let i = existing.length - 1; i >= 0; i--) {
+		if (existing[i].combatantId === combatantId && !existing[i].undone) {
+			targetIndex = i;
+			break;
+		}
+	}
+	if (targetIndex < 0) return null;
+	const next = existing.map((entry, index) =>
+		index === targetIndex ? { ...entry, undone: true } : entry,
+	);
+	return { [ZIPPER_TURN_HISTORY_PATH]: next };
+}
+
+/**
  * Mark the last NOT-already-undone entry as undone. Returns null if history is
  * empty or every entry is already undone (nothing to undo).
  */
