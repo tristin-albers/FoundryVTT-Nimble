@@ -470,7 +470,7 @@
 				</div>
 				{#if zipperTurnHistory.length > 0}
 					<ol class="nimble-ct__zipper-turn-history" aria-label="Turn history this round">
-						{#each zipperTurnHistory as entry (`${entry.actOrder}-${entry.combatantId}-${entry.occurrenceIndex ?? 0}`)}
+						{#each zipperTurnHistory as entry, i (`${i}-${entry.actOrder}-${entry.combatantId}-${entry.occurrenceIndex ?? 0}`)}
 							{@const historyCombatant = currentCombat?.combatants.get(entry.combatantId)}
 							{@const historyName =
 								historyCombatant?.name ??

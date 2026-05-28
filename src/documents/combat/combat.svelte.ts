@@ -798,6 +798,7 @@ class NimbleCombat extends Combat {
 					awaitingSelection: true,
 					actCounter: 0,
 				}),
+				...buildClearTurnHistoryUpdate(),
 				...buildSoloOccurrencesSnapshotUpdate(this.#countAliveHeroes()),
 			} as Parameters<Combat['update']>[0]);
 			// Rebuild turns now that soloOccurrencesPerRound is persisted —
