@@ -12,6 +12,7 @@ import registerTokenCombatantSync from './hooks/combatantHooks/tokenCombatantSyn
 import { conditionImmunityGuard } from './hooks/conditionImmunityGuard.js';
 import registerDicePoolSystemHooks from './hooks/dicePoolSystem.js';
 import { registerAttackedTriggerHooks } from './hooks/dicePoolTriggers/attackedTrigger.js';
+import { registerEncounterEndTriggerHooks } from './hooks/dicePoolTriggers/encounterEndTrigger.js';
 import { hotbarDrop as onHotbarDrop } from './hooks/hotBarDrop.js';
 import i18nInit from './hooks/i18nInit.js';
 import init from './hooks/init.js';
@@ -26,7 +27,7 @@ import setup from './hooks/setup.js';
 import registerZipperTokenOverlay from './hooks/zipperTokenOverlay.js';
 import { runDevFlagRebrandPreInit } from './migration/devFlagRebrand.js';
 import './scss/main.scss';
-import { SYSTEM_ID } from '#system';
+import { SYSTEM_ID, systemHookName } from '#system';
 import { getCombatManaGrantForCombat, getCombatManaGrantMap } from '#utils/combatManaRules.js';
 import { injectViteHmrClient } from '#utils/viteHmr.js';
 
@@ -104,7 +105,7 @@ type HookFn = (...args: object[]) => undefined | boolean | Promise<undefined | b
 
 // Condition immunity — block protected conditions before application
 (Hooks.on as (event: string, fn: HookFn) => number)(
-	'nimble.preApplyCondition',
+	systemHookName('preApplyCondition'),
 	conditionImmunityGuard as object as HookFn,
 );
 
@@ -119,6 +120,7 @@ registerKillTriggerHooks();
 registerBloodiedTriggerHooks();
 registerInitiativeTriggerHooks();
 registerAttackedTriggerHooks();
+registerEncounterEndTriggerHooks();
 registerMinionGroupTokenBadges();
 registerMinionGroupTokenActions();
 registerZipperTokenOverlay();

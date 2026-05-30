@@ -25,6 +25,25 @@ type RefilledEntry = {
 	trigger: DiceRefillTrigger;
 };
 
+const POOL_MAX_TOKEN_PATTERN = /@poolMax\b/g;
+const POOL_CURRENT_TOKEN_PATTERN = /@poolCurrent\b/g;
+
+// Pool-context tokens (@poolMax, @poolCurrent) can't live in actor rollData
+// because the same actor can own multiple pools with different values. Inline
+// them in the formula string so the standard evaluator handles arithmetic
+// like "@poolMax - 1" without further plumbing.
+function resolveRefillValue(
+	actor: CharacterActorLike,
+	pool: DicePoolState,
+	formula: unknown,
+): number {
+	if (typeof formula !== 'string') return resolveFormulaToInteger(actor, formula);
+	const substituted = formula
+		.replace(POOL_MAX_TOKEN_PATTERN, String(pool.max))
+		.replace(POOL_CURRENT_TOKEN_PATTERN, String(pool.faces.length));
+	return resolveFormulaToInteger(actor, substituted);
+}
+
 /**
  * Apply each pool's matching refill entries for the given triggers.
  * Returns the next state plus a per-pool diff describing what was rolled.
@@ -49,6 +68,15 @@ async function applyRefillTriggersToPools(
 			if (!triggerSet.has(refill.trigger)) continue;
 			matchingTrigger = refill.trigger;
 
+			if (refill.mode === 'clear') {
+				// 'clear' wipes the pool. Used by pools that reset between encounters
+				// (Oathsworn Judgment Dice expire at encounter end, rulebook: "The
+				// dice are expended whether you hit or miss"). The `value` field is
+				// ignored — clearing is unconditional.
+				pool.faces.length = 0;
+				continue;
+			}
+
 			if (refill.mode === 'refresh') {
 				const needed = pool.max - pool.faces.length;
 				for (let index = 0; index < needed; index += 1) {
@@ -59,11 +87,26 @@ async function applyRefillTriggersToPools(
 				continue;
 			}
 
-			const amount = resolveFormulaToInteger(actor, refill.value);
+			const amount = resolveRefillValue(actor, pool, refill.value);
 			if (refill.mode === 'set') {
 				const target = Math.min(amount, pool.max);
 				// 'set' rebuilds the pool to exactly `target` freshly-rolled dice.
 				pool.faces.length = 0;
+				for (let index = 0; index < target; index += 1) {
+					const face = await rollSingleDieFace(pool.dieSize);
+					pool.faces.push(face);
+					rolledFaces.push(face);
+				}
+				continue;
+			}
+
+			if (refill.mode === 'setIfEmpty') {
+				// 'setIfEmpty' rolls `target` fresh dice only when the pool is
+				// currently empty. Matches rulebook phrasing like Oathsworn
+				// Radiant Judgment: "if you have no Judgment Dice, roll your
+				// Judgment dice (2d6)." A pool with live dice is left alone.
+				if (pool.faces.length > 0) continue;
+				const target = Math.min(amount, pool.max);
 				for (let index = 0; index < target; index += 1) {
 					const face = await rollSingleDieFace(pool.dieSize);
 					pool.faces.push(face);

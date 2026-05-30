@@ -4,7 +4,7 @@ import type { NimbleBoonItem } from '#documents/item/boon.js';
 import type { NimbleClassItem } from '#documents/item/class.js';
 import type { NimbleFeatureItem } from '#documents/item/feature.js';
 import type { NimbleSubclassItem } from '#documents/item/subclass.js';
-import { SYSTEM_ID } from '#system';
+import { SYSTEM_ID, systemHookName } from '#system';
 import type { SkillKeyType } from '#types/skillKey.js';
 import { getHighestSpellTier } from '#utils/spell/getHighestSpellTier.ts';
 import CharacterMetaConfigDialog from '#view/dialogs/CharacterMetaConfigDialog.svelte';
@@ -221,6 +221,15 @@ export class NimbleCharacter extends NimbleBaseActor<'character'> {
 		// Prepare Class Data
 		this.prepareClassData(actorData);
 
+		// self:fullHp — computed here (not in base _populateDerivedTags) because
+		// character hp.max is derived from class data, not stored.
+		if (
+			actorData.attributes.hp.max > 0 &&
+			actorData.attributes.hp.value >= actorData.attributes.hp.max
+		) {
+			this.tags.add('self:fullHp');
+		}
+
 		// Prepare max Mana
 		actorData.resources.mana.value = actorData.resources.mana.current;
 		actorData.resources.mana.max = this._prepareMaxMana(actorData);
@@ -277,6 +286,15 @@ export class NimbleCharacter extends NimbleBaseActor<'character'> {
 			return [...item.rules.values()].some((rule) => rule.type === 'armorClass');
 		});
 		this.tags.add(`armor:${hasArmor ? 'equipped' : 'unarmored'}`);
+
+		// Shield status tag — character-only. Monsters/NPCs don't have an equipment
+		// system, so predicates using self:shield / self:noShield only apply to PCs.
+		const hasShield = this.items.some((item) => {
+			if (!item.isType('object')) return false;
+			const objectItem = item as unknown as NimbleObjectItem;
+			return objectItem.system.objectType === 'shield';
+		});
+		this.tags.add(hasShield ? 'self:shield' : 'self:noShield');
 	}
 
 	getClassAbilityBonuses() {
@@ -523,7 +541,7 @@ export class NimbleCharacter extends NimbleBaseActor<'character'> {
 			`${this.name}: Configure Skills`,
 			CharacterSkillsConfigDialog,
 			{ document: this },
-			{ icon: 'fa-solid fa-wrench', width: 600 },
+			{ icon: 'fa-solid fa-wrench', width: 600, height: 600 },
 		);
 
 		this.#dialogs.configureSkills.setTitle(`${this.name}: Configure Skills`);
@@ -610,7 +628,7 @@ export class NimbleCharacter extends NimbleBaseActor<'character'> {
 			const oldBonus = oldBonusContributions[size] ?? 0;
 			const newBonus = newBonusContributions[size] ?? 0;
 			const bonusDelta = newBonus - oldBonus;
-			const newMax = classTotal + newBonus;
+			const newMax = Math.max(classTotal + newBonus, 0);
 
 			const currentValue = this.system.attributes.hitDice[size]?.current ?? 0;
 
@@ -1547,7 +1565,7 @@ export class NimbleCharacter extends NimbleBaseActor<'character'> {
 		await manager.rest();
 
 		// @ts-expect-error - nimble.rest is a custom Nimble hook consumed by ruleEventDispatch
-		Hooks.callAll('nimble.rest', {
+		Hooks.callAll(systemHookName('rest'), {
 			actor: this,
 			restType: restData.restType,
 		});
